@@ -51,6 +51,13 @@ private:
     std::uniform_real_distribution<> x_dist;
     std::uniform_real_distribution<> y_dist;
     
+    // occupancy grid
+    nav_msgs::msg::OccupancyGrid occupancy_grid;
+    float max_occ_dist;
+
+    // threshold variables
+    double goal_threshold;
+    double max_expansion_dist;
 
     // callbacks
     // where rrt actually happens
