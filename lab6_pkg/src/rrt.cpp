@@ -40,9 +40,9 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()) {
 
     // occupancy grid
     occupancy_grid.header.frame_id = "laser";
-    occupancy_grid.info.resolution = this->get_parameter("resolution").as_double();
-    int width_temp = this->get_parameter("width_m").as_double() / occupancy_grid.info.resolution;
-    occupancy_grid.info.height = this->get_parameter("height_m").as_double() / occupancy_grid.info.resolution;
+    occupancy_grid.info.resolution = this->get_parameter("resolution").get_parameter_value().get<float>();
+    int width_temp = this->get_parameter("width_m").get_parameter_value().get<float>() / occupancy_grid.info.resolution;
+    occupancy_grid.info.height = this->get_parameter("height_m").get_parameter_value().get<float>() / occupancy_grid.info.resolution;
     // make sure occ cell is odd in width so can drive straight 
     if (width_temp % 2 == 0) {
         occupancy_grid.info.width = width_temp + 1;
@@ -50,7 +50,7 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()) {
         occupancy_grid.info.width = width_temp;
     }
     // store the top corner distances (max possible)
-    max_occ_dist = sqrt(pow(this->get_parameter("width_m").as_double(), 2)/4.0 + pow(this->get_parameter("height_m").as_double(), 2));
+    max_occ_dist = sqrt(pow(this->get_parameter("width_m").get_parameter_value().get<float>(), 2)/4.0 + pow(this->get_parameter("height_m").get_parameter_value().get<float>(), 2));
 
     
     RCLCPP_INFO(rclcpp::get_logger("RRT"), "%s\n", "Created new RRT Object.");
@@ -83,7 +83,6 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
             int x = -(ltr - occupancy_grid.info.width/2);
             int y = fwd;
             occupancy_grid.data[x*occupancy_grid.info.width + y] = 100;
-            occupancy_grid.data.push_back(100);
         }
     }
     
@@ -91,17 +90,37 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
 }
 
 void RRT::pose_callback(const nav_msgs::msg::Odometry::ConstSharedPtr pose_msg) {
+    /*
     // The pose callback when subscribed to particle filter's inferred pose
     // The RRT main loop happens here
     // Args:
     //    pose_msg (*PoseStamped): pointer to the incoming pose message
     // Returns:
-    //
+    //    tree as std::vector
+    */
 
-    // tree as std::vector
     std::vector<RRT_Node> tree;
+    pos_x = pose_msg->pose.pose.position.x;
+    pos_y = pose_msg->pose.pose.position.y;
 
-    // TODO: fill in the RRT main loop
+    RRT_Node root;
+    root.x = pos_x;
+    root.y = pos_y;
+    root.cost = 0.0;
+    root.parent = -1;
+    root.is_root = true;
+    
+    tree.push_back(root);
+
+
+    //
+    while (is_goal() != true)
+    {
+        std::vector<double> sample_node = sample(); // we're sure its in free space
+        int nearest_node = nearest(tree, sample_node);
+        RRT_Node steer_node = steer(nearest_node, sample_node);
+        
+    }
 
 
 
@@ -124,10 +143,25 @@ std::vector<double> RRT::sample() {
     */
     
     std::mt19937 rand_gen(time(nullptr)); // make random number generator based on some seed time(nullptr)
-    
+    std::uniform_real_distribution<float> fwd_range(0, this->get_parameter("height_m").get_parameter_value().get<float>());
+    std::uniform_real_distribution<float> rtl_range(0, this->get_parameter("width_m").get_parameter_value().get<float>());
+
     std::vector<double> sampled_point;
-    sampled_point.push_back(rand_gen());
-    sampled_point.push_back(rand_gen());
+    bool terminate_flag = true;
+    while (terminate_flag) {
+        float x_samp = fwd_range(rand_gen);
+        float y_samp = rtl_range(rand_gen);
+
+        // check if in the free space
+        if (occupancy_grid.data[std::floor(x_samp / this->get_parameter("resolution").get_parameter_value().get<float>()) 
+                                + std::floor(y_samp / this->get_parameter("resolution").get_parameter_value().get<float>())] != 0) {
+            continue;
+        } else {
+            sampled_point.push_back(x_samp);
+            sampled_point.push_back(y_samp);
+            terminate_flag = true;
+        }
+    }
 
     return sampled_point;
 }
@@ -145,12 +179,11 @@ int RRT::nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_point
 
     int nearest_node = 0;
     double nearest_dist = MAXFLOAT;
-    double x, y, dist;
-    for(int i = 0; i < tree.size; i++)
+    for (int i = 0; i < tree.size(); i++)
     {
-        x = tree[i].x - sampled_point[0];
-        y = tree[i].y - sampled_point[1];
-        dist = sqrt(pow(x,2) - pow(y,2));
+        double x = tree[i].x - sampled_point[0];
+        double y = tree[i].y - sampled_point[1];
+        double dist = sqrt(pow(x,2) - pow(y,2));
         if(dist < nearest_dist)
         {
             nearest_node = i;
@@ -177,7 +210,7 @@ RRT_Node RRT::steer(RRT_Node &nearest_node, std::vector<double> &sampled_point) 
        new_node (RRT_Node): new node created from steering
     */
     RRT_Node new_node;
-    double x, y, dist, theta;
+    double x, y, dist;
     
     x = sampled_point[0] - nearest_node.x;
     y = sampled_point[1] - nearest_node.y;
@@ -185,7 +218,7 @@ RRT_Node RRT::steer(RRT_Node &nearest_node, std::vector<double> &sampled_point) 
         
     if (dist > max_expansion_dist) 
     {
-        theta = atan2(y,x);
+        double theta = atan2(y,x);
         new_node.x = nearest_node.x + max_expansion_dist * cos(theta);
         new_node.y = nearest_node.y + max_expansion_dist * sin(theta);
     }
@@ -197,6 +230,16 @@ RRT_Node RRT::steer(RRT_Node &nearest_node, std::vector<double> &sampled_point) 
 
     return new_node;
 }
+
+// make clone of np.arange
+template<typename T>
+std::vector<T> arange(T start, T stop, T step = 1) {
+    std::vector<T> values;
+    for (T value = start; value < stop; value += step)
+        values.push_back(value);
+    return values;
+}
+
 
 bool RRT::check_collision(RRT_Node &nearest_node, RRT_Node &new_node) {
     /* 
@@ -210,12 +253,14 @@ bool RRT::check_collision(RRT_Node &nearest_node, RRT_Node &new_node) {
     */
 
     bool collision = false;
-    // TODO: fill in this method
+    // TODO: consider the cars dims with AABB
 
     // use AABB (axis-aligned bounding box)
     // refer here: https://www.realtimerendering.com/intersections.html
-    // this->occupancy_grid; // use this somehow
+    
+    float slope = ((nearest_node.x - new_node.x) / (nearest_node.y - new_node.y));
 
+    for (float point)
 
     return collision;
 }
