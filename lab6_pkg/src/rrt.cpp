@@ -79,15 +79,20 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
     */
 
     // TODO: update your occupancy grid
+    cout << "scan callback" << endl;
     occupancy_grid.info.map_load_time = scan_msg->header.stamp;
     occupancy_grid.header.stamp = scan_msg->header.stamp;
     occupancy_grid.data = {0};
 
-    int index_neg90 = (int) ((-90.0 - scan_msg->angle_min) / scan_msg->angle_increment);
-    int index_pos90 = (int) ((90.0 - scan_msg->angle_min) / scan_msg->angle_increment);
+    float rad90 = 90.0 * M_PI / 180.0;
+    int index_neg90 = (int) ((-rad90 - scan_msg->angle_min) / scan_msg->angle_increment);
+    int index_pos90 = (int) ((rad90 - scan_msg->angle_min) / scan_msg->angle_increment);
 
+    cout << "index_neg90: " << index_neg90 << endl;
+    cout << "index_pos90: " << index_pos90 << endl;
     for(int i=index_neg90; i< index_pos90; i++)
-    {
+    {  
+        // cout << "i: " << i << endl;
         if(scan_msg->ranges[i] < max_occ_dist)
         {
             // forward and right to left on the grid
@@ -99,6 +104,7 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
             occupancy_grid.data[x*occupancy_grid.info.width + y] = 100;
         }
     }
+    cout << "scan callback done" << endl;
 }
 
 void RRT::pose_callback(const nav_msgs::msg::Odometry::ConstSharedPtr pose_msg) {
@@ -110,7 +116,7 @@ void RRT::pose_callback(const nav_msgs::msg::Odometry::ConstSharedPtr pose_msg) 
     Returns:
        tree as std::vector
     */
-
+    cout << "pose callback lol" << endl;
     std::vector<RRT_Node> tree;
 
     RRT_Node root;
@@ -122,7 +128,8 @@ void RRT::pose_callback(const nav_msgs::msg::Odometry::ConstSharedPtr pose_msg) 
 
     tree.push_back(root);
     RRT_Node steer_node;
-    
+    cout << "before while" << endl;
+    int count = 0;
     while (!is_goal(tree.back()))  //unsure of terminating codition
     {
         std::vector<double> sample_node = sample(); // we're sure its in free space
@@ -130,7 +137,13 @@ void RRT::pose_callback(const nav_msgs::msg::Odometry::ConstSharedPtr pose_msg) 
         steer_node = steer(tree[nearest_node], sample_node);
         // check if steer node is free then push back
         tree.push_back(steer_node);
-    } 
+        cout << "sample node: " << sample_node[0] << ", " << sample_node[1] << endl;
+        cout << "steer node: " << steer_node.x << ", " << steer_node.y << endl;
+        cout << "tree end: " << tree.back().x << ", " << tree.back().y << endl;
+        if(count++ > 5)
+            break;
+    }
+    cout << "Reached goal" << endl;
     
     rrt_path = find_path(tree, steer_node);
     publish_drive();
@@ -146,7 +159,7 @@ void RRT::waypoint_callback(const interfaces_hot_wheels::msg::Waypoint::ConstSha
         void
         populated member var goal_*: the goal point
     */
-
+    cout << "waypoint callback" << endl;
     // check if the waypoint is outside the grid
     float pt_dist = std::sqrt(std::pow(waypoint->x, 2) + std::pow(waypoint->y, 2));
     // use similar triangles to get the distance from the origin of the car projected on the grid
@@ -183,19 +196,21 @@ std::vector<double> RRT::sample() {
 
     std::mt19937 rand_gen(this->gen); // make random number generator based on some seed time(nullptr)
     std::uniform_real_distribution<float> fwd_range(0, this->get_parameter("height_m").get_parameter_value().get<float>());
-    std::uniform_real_distribution<float> rtl_range(0, this->get_parameter("width_m").get_parameter_value().get<float>());
+    std::uniform_real_distribution<float> rtl_range(
+        -this->get_parameter("width_m").get_parameter_value().get<float>(),
+         this->get_parameter("width_m").get_parameter_value().get<float>());
 
     std::vector<double> sampled_point;
-    bool terminate_flag = true;
-    while (terminate_flag) {
+    bool terminate_flag = false;
+    while (!terminate_flag) {
         float x_samp = fwd_range(rand_gen);
         float y_samp = rtl_range(rand_gen);
 
         // check if in the free space
-        if (occupancy_grid.data[std::floor(x_samp / this->get_parameter("resolution").get_parameter_value().get<float>())
-                                + std::floor(y_samp / this->get_parameter("resolution").get_parameter_value().get<float>())] != 0) {
-            continue;
+        if (is_xy_occupied(x_samp, y_samp)) {
+            continue; // is an obstacle
         } else {
+            // is free space
             sampled_point.push_back(x_samp);
             sampled_point.push_back(y_samp);
             terminate_flag = true;
@@ -241,7 +256,7 @@ int RRT::nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_point
 
     int nearest_node = 0;
     double nearest_dist = MAXFLOAT;
-    for (int i = 0; i < tree.size(); i++)
+    for (long unsigned int i = 0; i < tree.size(); i++)
     {
         double x = tree[i].x - sampled_point[0];
         double y = tree[i].y - sampled_point[1];
@@ -372,7 +387,8 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
     */
 
     std::vector<RRT_Node> found_path;
-    RRT_Node curr_node;
+    RRT_Node curr_node = latest_added_node;
+
 
     while (curr_node.parent != -1)
     {
@@ -407,6 +423,7 @@ int RRT::xy2ind(float x, float y){
 }
 
 // RRT* methods
+/*
 double RRT::cost(std::vector<RRT_Node> &tree, RRT_Node &node) {
     // This method returns the cost associated with a node
     // Args:
@@ -449,3 +466,4 @@ std::vector<int> RRT::near(std::vector<RRT_Node> &tree, RRT_Node &node) {
 
     return neighborhood;
 }
+*/
