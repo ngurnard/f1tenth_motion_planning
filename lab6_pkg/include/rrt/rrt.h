@@ -17,6 +17,7 @@
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "geometry_msgs/msg/pose_stamped.hpp"
 #include "visualization_msgs/msg/marker.hpp"
+#include "visualization_msgs/msg/marker_array.hpp"
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include <tf2_ros/transform_broadcaster.h>
 #include "interfaces_hot_wheels/msg/waypoint.hpp"
@@ -32,9 +33,11 @@ typedef struct RRT_Node {
     double x, y;
     double cost; // only used for RRT*
     int parent; // index of parent node in the tree vector
+    int index; // index of this node in the tree vector
     bool is_root = false;
 } RRT_Node;
 
+static unsigned int marker_id = 0;
 
 class RRT : public rclcpp::Node {
 public:
@@ -43,12 +46,17 @@ public:
 private:
 
     // TODO: add the publishers and subscribers you need
-
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr pose_sub_;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
     rclcpp::Subscription<interfaces_hot_wheels::msg::Waypoint>::SharedPtr waypoint_sub_;
     
     rclcpp::Publisher<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr drive_pub_;
+    rclcpp::Publisher<nav_msgs::msg::OccupancyGrid >::SharedPtr occ_grid_pub_;
+
+    // visualization publishers
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_goal_vis_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr rrt_node_vis_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr rrt_branch_vis_pub_;
 
     // random generator, use this
     std::mt19937 gen;
@@ -65,12 +73,26 @@ private:
     double goal_threshold;
     double max_expansion_dist;
 
+    // tree variables
+    std::vector<RRT_Node> tree;
+    RRT_Node root;
+
     // path
     std::vector<RRT_Node> rrt_path;
 
     // waypoint vars
     double goal_x;
     double goal_y;
+
+    // topic vars
+    std::string pose_topic;
+    std::string scan_topic;
+    std::string cur_wpt_topic;
+    std::string drive_topic;
+    std::string occ_grid_topic;
+    
+    // frame vars
+    std::string local_frame;
 
     // callbacks
     // where rrt actually happens

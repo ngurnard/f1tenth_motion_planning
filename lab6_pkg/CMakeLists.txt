@@ -24,7 +24,9 @@ foreach(PACKAGE
   visualization_msgs
   Eigen3
   tf2_ros
-  interfaces_hot_wheels)
+  interfaces_hot_wheels
+  pure_pursuit
+  )
 
   find_package(${PACKAGE} REQUIRED)
 
@@ -55,6 +57,12 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   scripts/rrt_node.py
   DESTINATION lib/${PROJECT_NAME}
+)
+
+# Install launch files.
+install(DIRECTORY
+  launch
+  DESTINATION share/${PROJECT_NAME}/
 )
 
 if(BUILD_TESTING)

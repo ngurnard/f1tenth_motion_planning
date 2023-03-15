@@ -11,21 +11,18 @@ RRT::~RRT() {
 }
 
 // Constructor of the RRT class
-RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
+RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0),
+            pose_topic("ego_racecar/odom"), scan_topic("/scan"), cur_wpt_topic("/waypoint"),
+            drive_topic("/drive"), occ_grid_topic("/occ_grid"), local_frame("/laser")
 {
-    // ROS topics
-    std::string pose_topic = "ego_racecar/odom";
-    std::string scan_topic = "/scan";
-    std::string cur_wpt_topic_ = "/waypoint";
-    std::string drive_topic_ = "/drive";
-
     // ROS publishers
-    drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic_, 1);
+    drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic, 1);
+    occ_grid_pub_ = this->create_publisher<nav_msgs::msg::OccupancyGrid>(occ_grid_topic, 1);
 
     // ROS params
     auto param_desc = rcl_interfaces::msg::ParameterDescriptor{};
     param_desc.description = "Resolution of the occupancy grid in meters";
-    this->declare_parameter("resolution", 0.05, param_desc);
+    this->declare_parameter("resolution", 0.1, param_desc);
     param_desc.description = "Width of the occupancy grid in meters";
     this->declare_parameter("width_m", 2.0, param_desc);
     param_desc.description = "Height of the occupancy grid in meters";
@@ -42,6 +39,8 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     // this->declare_parameter("car_width", .15, param_desc);
 
     this->goal_x = this->get_parameter("height_m").get_parameter_value().get<float>();
+    goal_threshold = this->get_parameter("resolution").get_parameter_value().get<float>() / 2.0;
+    max_expansion_dist = this->get_parameter("resolution").get_parameter_value().get<float>() / 10.0;
 
     // ROS subscribers
     // TODO: create subscribers as you need
@@ -50,7 +49,17 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
       scan_topic, 1, std::bind(&RRT::scan_callback, this, std::placeholders::_1));
     waypoint_sub_ = this->create_subscription<interfaces_hot_wheels::msg::Waypoint>(
-      cur_wpt_topic_, 1, std::bind(&RRT::waypoint_callback, this, std::placeholders::_1));
+      cur_wpt_topic, 1, std::bind(&RRT::waypoint_callback, this, std::placeholders::_1));
+
+    // random generator
+    std::uniform_real_distribution<> x_temp(
+        0.0,
+        this->get_parameter("height_m").get_parameter_value().get<float>());
+    std::uniform_real_distribution<> y_temp(
+        -this->get_parameter("width_m").get_parameter_value().get<float>(),
+         this->get_parameter("width_m").get_parameter_value().get<float>());
+    x_dist.param(x_temp.param());
+    y_dist.param(y_temp.param());
 
     // occupancy grid
     occupancy_grid.header.frame_id = "laser";
@@ -68,6 +77,11 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
 
 
     RCLCPP_INFO(rclcpp::get_logger("RRT"), "%s\n", "Created new RRT Object.");
+
+    // visualization code
+    rrt_goal_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_goal", 1);
+    rrt_node_vis_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("rrt_nodes", 1);
+    rrt_branch_vis_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("rrt_branches", 1);
 }
 
 void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) {
@@ -79,7 +93,7 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
     */
 
     // TODO: update your occupancy grid
-    cout << "scan callback" << endl;
+    // cout << "scan callback" << endl;
     occupancy_grid.info.map_load_time = scan_msg->header.stamp;
     occupancy_grid.header.stamp = scan_msg->header.stamp;
     occupancy_grid.data = {0};
@@ -88,8 +102,6 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
     int index_neg90 = (int) ((-rad90 - scan_msg->angle_min) / scan_msg->angle_increment);
     int index_pos90 = (int) ((rad90 - scan_msg->angle_min) / scan_msg->angle_increment);
 
-    cout << "index_neg90: " << index_neg90 << endl;
-    cout << "index_pos90: " << index_pos90 << endl;
     for(int i=index_neg90; i< index_pos90; i++)
     {  
         // cout << "i: " << i << endl;
@@ -104,7 +116,8 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
             occupancy_grid.data[x*occupancy_grid.info.width + y] = 100;
         }
     }
-    cout << "scan callback done" << endl;
+    occ_grid_pub_->publish(occupancy_grid);
+    // cout << "scan callback done" << endl;
 }
 
 void RRT::pose_callback(const nav_msgs::msg::Odometry::ConstSharedPtr pose_msg) {
@@ -117,34 +130,40 @@ void RRT::pose_callback(const nav_msgs::msg::Odometry::ConstSharedPtr pose_msg) 
        tree as std::vector
     */
     cout << "pose callback lol" << endl;
-    std::vector<RRT_Node> tree;
-
-    RRT_Node root;
+    
+    tree.clear();
+    
     root.x = 0;
     root.y = 0;
     root.cost = 0.0;
     root.parent = -1;
     root.is_root = true;
+    root.index = 0;
 
     tree.push_back(root);
     RRT_Node steer_node;
-    cout << "before while" << endl;
-    int count = 0;
+    int count = 1;
     while (!is_goal(tree.back()))  //unsure of terminating codition
     {
         std::vector<double> sample_node = sample(); // we're sure its in free space
         int nearest_node = nearest(tree, sample_node);
         steer_node = steer(tree[nearest_node], sample_node);
         // check if steer node is free then push back
+        if(is_xy_occupied(steer_node.x, steer_node.y))
+        {
+            continue;
+        }
+        steer_node.is_root = false;
+        steer_node.index = count;
         tree.push_back(steer_node);
-        cout << "sample node: " << sample_node[0] << ", " << sample_node[1] << endl;
-        cout << "steer node: " << steer_node.x << ", " << steer_node.y << endl;
-        cout << "tree end: " << tree.back().x << ", " << tree.back().y << endl;
-        if(count++ > 5)
-            break;
+        count++;
+        // cout << "sample node: " << sample_node[0] << ", " << sample_node[1] << endl;
+        // cout << "steer node: " << steer_node.x << ", " << steer_node.y << endl;
+        // cout << "tree end: " << tree.back().x << ", " << tree.back().y << endl;
+        // cout << "count: " << count << endl;
     }
     cout << "Reached goal" << endl;
-    
+    // cout << "tree size: " << tree.size() << endl;
     rrt_path = find_path(tree, steer_node);
     publish_drive();
 }
@@ -159,7 +178,19 @@ void RRT::waypoint_callback(const interfaces_hot_wheels::msg::Waypoint::ConstSha
         void
         populated member var goal_*: the goal point
     */
-    cout << "waypoint callback" << endl;
+    
+    visualization_msgs::msg::Marker goal_marker;
+    goal_marker.type = visualization_msgs::msg::Marker::SPHERE;
+    goal_marker.id = marker_id;
+    goal_marker.scale.x = 0.15;
+    goal_marker.scale.y = 0.15;
+    goal_marker.scale.z = 0.15;
+    goal_marker.color.a = 0.5;
+    goal_marker.color.r = 0.0;
+    goal_marker.color.g = 0.0;
+    goal_marker.color.b = 1.0;
+    goal_marker.header.frame_id = local_frame;
+    
     // check if the waypoint is outside the grid
     float pt_dist = std::sqrt(std::pow(waypoint->x, 2) + std::pow(waypoint->y, 2));
     // use similar triangles to get the distance from the origin of the car projected on the grid
@@ -177,7 +208,10 @@ void RRT::waypoint_callback(const interfaces_hot_wheels::msg::Waypoint::ConstSha
         goal_y = waypoint->y;
     }
 
-    return;
+    goal_marker.pose.position.x = goal_x;
+    goal_marker.pose.position.y = goal_y;
+    rrt_goal_vis_pub_->publish(goal_marker);
+    
 }
 
 std::vector<double> RRT::sample() {
@@ -194,17 +228,12 @@ std::vector<double> RRT::sample() {
     the generator and the distribution is created for you (check the header file)
     */
 
-    std::mt19937 rand_gen(this->gen); // make random number generator based on some seed time(nullptr)
-    std::uniform_real_distribution<float> fwd_range(0, this->get_parameter("height_m").get_parameter_value().get<float>());
-    std::uniform_real_distribution<float> rtl_range(
-        -this->get_parameter("width_m").get_parameter_value().get<float>(),
-         this->get_parameter("width_m").get_parameter_value().get<float>());
 
     std::vector<double> sampled_point;
     bool terminate_flag = false;
     while (!terminate_flag) {
-        float x_samp = fwd_range(rand_gen);
-        float y_samp = rtl_range(rand_gen);
+        float x_samp = x_dist(gen);
+        float y_samp = y_dist(gen);
 
         // check if in the free space
         if (is_xy_occupied(x_samp, y_samp)) {
@@ -241,6 +270,8 @@ void RRT::publish_drive(){
     drive_msg.drive.steering_angle = this->get_parameter("Kp").get_parameter_value().get<float>() * theta;
     drive_msg.drive.speed = this->get_parameter("v").get_parameter_value().get<float>();
     drive_pub_->publish(drive_msg);
+
+    cout << "Published drive message" << endl;
 }
 
 
@@ -256,14 +287,14 @@ int RRT::nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_point
 
     int nearest_node = 0;
     double nearest_dist = MAXFLOAT;
-    for (long unsigned int i = 0; i < tree.size(); i++)
+    for (auto node : tree)
     {
-        double x = tree[i].x - sampled_point[0];
-        double y = tree[i].y - sampled_point[1];
+        double x = node.x - sampled_point[0];
+        double y = node.y - sampled_point[1];
         double dist = sqrt(pow(x,2) - pow(y,2));
         if(dist < nearest_dist)
         {
-            nearest_node = i;
+            nearest_node = node.index;
             nearest_dist = dist;
         }
     }
@@ -304,6 +335,7 @@ RRT_Node RRT::steer(RRT_Node &nearest_node, std::vector<double> &sampled_point) 
         new_node.x = sampled_point[0];
         new_node.y = sampled_point[1];
     }
+    new_node.parent = nearest_node.index;
 
     return new_node;
 }
@@ -366,6 +398,7 @@ bool RRT::is_goal(RRT_Node &latest_added_node) {
     x = latest_added_node.x - goal_x;
     y = latest_added_node.y - goal_y;
     dist = sqrt(pow(x,2) + pow(y,2));
+    // cout << "dist: " << dist << endl;
     if(dist < goal_threshold)
     {
         close_enough = true;
@@ -388,13 +421,16 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
 
     std::vector<RRT_Node> found_path;
     RRT_Node curr_node = latest_added_node;
-
-
+    cout << "Parent: " << curr_node.parent << endl;
+    // cout << "Tree size: " << tree.size() << endl;
+    // int count = 0;
     while (curr_node.parent != -1)
     {
         found_path.push_back(curr_node);
         curr_node = tree[curr_node.parent];
+        cout << "Parent: " << curr_node.parent << endl;
     }
+    cout << "found path" << endl;
 
     return found_path;
 }
@@ -425,7 +461,7 @@ int RRT::xy2ind(float x, float y){
 // RRT* methods
 /*
 double RRT::cost(std::vector<RRT_Node> &tree, RRT_Node &node) {
-    // This method returns the cost associated with a node
+    // This method returngen((std::random_device())()s the cost associated with a node
     // Args:
     //    tree (std::vector<RRT_Node>): the current tree
     //    node (RRT_Node): the node the cost is calculated for
