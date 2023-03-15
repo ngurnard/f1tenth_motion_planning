@@ -11,10 +11,16 @@ RRT::~RRT() {
 }
 
 // Constructor of the RRT class
-RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()) {
+RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
+{
+    // ROS topics
+    std::string pose_topic = "ego_racecar/odom";
+    std::string scan_topic = "/scan";
+    std::string cur_wpt_topic_ = "/waypoint";
+    std::string drive_topic_ = "/drive";
 
     // ROS publishers
-    // TODO: create publishers for the the drive topic, and other topics you might need
+    drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic_, 1);
 
     // ROS params
     auto param_desc = rcl_interfaces::msg::ParameterDescriptor{};
@@ -24,26 +30,34 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()) {
     this->declare_parameter("width_m", 2.0, param_desc);
     param_desc.description = "Height of the occupancy grid in meters";
     this->declare_parameter("height_m", 1.0, param_desc);
+    param_desc.description = "Lookahead distance in meters";
+    this->declare_parameter("L", 1.0, param_desc);
+    param_desc.description = "Kp value";
+    this->declare_parameter("Kp", 0.1);
+    param_desc.description = "Velocity";
+    this->declare_parameter("v", 2.0);
 
-    // TODO: get the actual car width
-    param_desc.description = "Width in the car in meters";
-    this->declare_parameter("car_width", .15, param_desc);
+    // // TODO: get the actual car width
+    // param_desc.description = "Width in the car in meters";
+    // this->declare_parameter("car_width", .15, param_desc);
+
+    this->goal_x = this->get_parameter("height_m").get_parameter_value().get<float>();
 
     // ROS subscribers
     // TODO: create subscribers as you need
-    string pose_topic = "ego_racecar/odom";
-    string scan_topic = "/scan";
     pose_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
       pose_topic, 1, std::bind(&RRT::pose_callback, this, std::placeholders::_1));
     scan_sub_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
       scan_topic, 1, std::bind(&RRT::scan_callback, this, std::placeholders::_1));
+    waypoint_sub_ = this->create_subscription<interfaces_hot_wheels::msg::Waypoint>(
+      cur_wpt_topic_, 1, std::bind(&RRT::waypoint_callback, this, std::placeholders::_1));
 
     // occupancy grid
     occupancy_grid.header.frame_id = "laser";
     occupancy_grid.info.resolution = this->get_parameter("resolution").get_parameter_value().get<float>();
     int width_temp = this->get_parameter("width_m").get_parameter_value().get<float>() / occupancy_grid.info.resolution;
     occupancy_grid.info.height = this->get_parameter("height_m").get_parameter_value().get<float>() / occupancy_grid.info.resolution;
-    // make sure occ cell is odd in width so can drive straight 
+    // make sure occ cell is odd in width so can drive straight
     if (width_temp % 2 == 0) {
         occupancy_grid.info.width = width_temp + 1;
     } else {
@@ -52,7 +66,7 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()) {
     // store the top corner distances (max possible)
     max_occ_dist = sqrt(pow(this->get_parameter("width_m").get_parameter_value().get<float>(), 2)/4.0 + pow(this->get_parameter("height_m").get_parameter_value().get<float>(), 2));
 
-    
+
     RCLCPP_INFO(rclcpp::get_logger("RRT"), "%s\n", "Created new RRT Object.");
 }
 
@@ -72,60 +86,85 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
     int index_neg90 = (int) ((-90.0 - scan_msg->angle_min) / scan_msg->angle_increment);
     int index_pos90 = (int) ((90.0 - scan_msg->angle_min) / scan_msg->angle_increment);
 
-    for(int i=index_neg90; i< index_pos90; i++) 
+    for(int i=index_neg90; i< index_pos90; i++)
     {
         if(scan_msg->ranges[i] < max_occ_dist)
         {
-            // forward and left to right on the grid
+            // forward and right to left on the grid
             int fwd = (int) (scan_msg->ranges[i] * cos(scan_msg->angle_min + i * scan_msg->angle_increment) / occupancy_grid.info.resolution);
-            int ltr = (int) (scan_msg->ranges[i] * sin(scan_msg->angle_min + i * scan_msg->angle_increment) / occupancy_grid.info.resolution);
+            int rtl = (int) (scan_msg->ranges[i] * sin(scan_msg->angle_min + i * scan_msg->angle_increment) / occupancy_grid.info.resolution);
             // the origin of the grid is the bottom left so adjust from car frame calcs
-            int x = -(ltr - occupancy_grid.info.width/2);
+            int x = -(rtl - occupancy_grid.info.width/2);
             int y = fwd;
             occupancy_grid.data[x*occupancy_grid.info.width + y] = 100;
         }
     }
-    
-    
 }
 
 void RRT::pose_callback(const nav_msgs::msg::Odometry::ConstSharedPtr pose_msg) {
     /*
-    // The pose callback when subscribed to particle filter's inferred pose
-    // The RRT main loop happens here
-    // Args:
-    //    pose_msg (*PoseStamped): pointer to the incoming pose message
-    // Returns:
-    //    tree as std::vector
+    The pose callback when subscribed to particle filter's inferred pose
+    The RRT main loop happens here
+    Args:
+       pose_msg (*PoseStamped): pointer to the incoming pose message
+    Returns:
+       tree as std::vector
     */
 
     std::vector<RRT_Node> tree;
-    pos_x = pose_msg->pose.pose.position.x;
-    pos_y = pose_msg->pose.pose.position.y;
 
     RRT_Node root;
-    root.x = pos_x;
-    root.y = pos_y;
+    root.x = 0;
+    root.y = 0;
     root.cost = 0.0;
     root.parent = -1;
     root.is_root = true;
-    
+
     tree.push_back(root);
-
-
-    //
-    while (is_goal() != true)
+    RRT_Node steer_node;
+    
+    while (!is_goal(tree.back()))  //unsure of terminating codition
     {
         std::vector<double> sample_node = sample(); // we're sure its in free space
         int nearest_node = nearest(tree, sample_node);
-        RRT_Node steer_node = steer(nearest_node, sample_node);
-        
+        steer_node = steer(tree[nearest_node], sample_node);
+        // check if steer node is free then push back
+        tree.push_back(steer_node);
+    } 
+    
+    rrt_path = find_path(tree, steer_node);
+    publish_drive();
+}
+
+void RRT::waypoint_callback(const interfaces_hot_wheels::msg::Waypoint::ConstSharedPtr waypoint) {
+    /*
+    The wpt callback, where we determine what waypoint to make the goal in RRT projected onto
+    the occupancy grid if it is far away
+    Args:
+       wpt_msg (*Waypoint): pointer to the incoming waypoint message
+    Returns:
+        void
+        populated member var goal_*: the goal point
+    */
+
+    // check if the waypoint is outside the grid
+    float pt_dist = std::sqrt(std::pow(waypoint->x, 2) + std::pow(waypoint->y, 2));
+    // use similar triangles to get the distance from the origin of the car projected on the grid
+    float y_dist_temp = this->get_parameter("height_m").get_parameter_value().get<float>() * waypoint->y / std::abs(waypoint->x);
+    // get the hypotenuse in the grid along the unit vector to the waypoint
+    float grid_dist = std::sqrt(std::pow(this->get_parameter("height_m").get_parameter_value().get<float>(), 2) +
+                                std::pow(y_dist_temp, 2));
+    if (pt_dist > grid_dist) {
+        // project onto the grid since outside of the grid
+        goal_x = this->get_parameter("height_m").get_parameter_value().get<float>();
+        goal_y = y_dist_temp;
+    } else {
+        // already inside of the grid
+        goal_x = waypoint->x;
+        goal_y = waypoint->y;
     }
 
-
-
-    // path found as Path message
-
+    return;
 }
 
 std::vector<double> RRT::sample() {
@@ -141,8 +180,8 @@ std::vector<double> RRT::sample() {
     look up the documentation on how to use std::mt19937 devices with a distribution
     the generator and the distribution is created for you (check the header file)
     */
-    
-    std::mt19937 rand_gen(time(nullptr)); // make random number generator based on some seed time(nullptr)
+
+    std::mt19937 rand_gen(this->gen); // make random number generator based on some seed time(nullptr)
     std::uniform_real_distribution<float> fwd_range(0, this->get_parameter("height_m").get_parameter_value().get<float>());
     std::uniform_real_distribution<float> rtl_range(0, this->get_parameter("width_m").get_parameter_value().get<float>());
 
@@ -153,7 +192,7 @@ std::vector<double> RRT::sample() {
         float y_samp = rtl_range(rand_gen);
 
         // check if in the free space
-        if (occupancy_grid.data[std::floor(x_samp / this->get_parameter("resolution").get_parameter_value().get<float>()) 
+        if (occupancy_grid.data[std::floor(x_samp / this->get_parameter("resolution").get_parameter_value().get<float>())
                                 + std::floor(y_samp / this->get_parameter("resolution").get_parameter_value().get<float>())] != 0) {
             continue;
         } else {
@@ -164,6 +203,29 @@ std::vector<double> RRT::sample() {
     }
 
     return sampled_point;
+}
+
+void RRT::publish_drive(){    
+    /*
+    This method publishes the drive message to the drive topic
+    Checks waypoint on RRT path just outside lookahead distance
+    */
+    
+    double theta; 
+    for (auto waypoint : rrt_path)
+    {
+        double dist = sqrt(pow(waypoint.x, 2) + pow(waypoint.y,2));
+        if (dist > this->get_parameter("L").get_parameter_value().get<float>())
+        {
+            theta = 2 * waypoint.y/pow(dist, 2);
+            break;
+        }
+    }
+    
+    ackermann_msgs::msg::AckermannDriveStamped drive_msg;
+    drive_msg.drive.steering_angle = this->get_parameter("Kp").get_parameter_value().get<float>() * theta;
+    drive_msg.drive.speed = this->get_parameter("v").get_parameter_value().get<float>();
+    drive_pub_->publish(drive_msg);
 }
 
 
@@ -195,10 +257,10 @@ int RRT::nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_point
 }
 
 RRT_Node RRT::steer(RRT_Node &nearest_node, std::vector<double> &sampled_point) {
-    /* 
-    The function steer:(x,y)->z returns a point such that z is “closer” 
-    to y than x is. The point z returned by the function steer will be 
-    such that z minimizes ||z−y|| while at the same time maintaining 
+    /*
+    The function steer:(x,y)->z returns a point such that z is “closer”
+    to y than x is. The point z returned by the function steer will be
+    such that z minimizes ||z−y|| while at the same time maintaining
     ||z−x|| <= max_expansion_dist, for a prespecified max_expansion_dist > 0
 
     basically, expand the tree towards the sample point (within a max dist)
@@ -211,12 +273,12 @@ RRT_Node RRT::steer(RRT_Node &nearest_node, std::vector<double> &sampled_point) 
     */
     RRT_Node new_node;
     double x, y, dist;
-    
+
     x = sampled_point[0] - nearest_node.x;
     y = sampled_point[1] - nearest_node.y;
     dist = sqrt(pow(x,2) - pow(y,2));
-        
-    if (dist > max_expansion_dist) 
+
+    if (dist > max_expansion_dist)
     {
         double theta = atan2(y,x);
         new_node.x = nearest_node.x + max_expansion_dist * cos(theta);
@@ -231,19 +293,9 @@ RRT_Node RRT::steer(RRT_Node &nearest_node, std::vector<double> &sampled_point) 
     return new_node;
 }
 
-// make clone of np.arange
-template<typename T>
-std::vector<T> arange(T start, T stop, T step = 1) {
-    std::vector<T> values;
-    for (T value = start; value < stop; value += step)
-        values.push_back(value);
-    return values;
-}
-
-
 bool RRT::check_collision(RRT_Node &nearest_node, RRT_Node &new_node) {
-    /* 
-    This method returns a boolean indicating if the path between the 
+    /*
+    This method returns a boolean indicating if the path between the
     nearest node and the new node created from steering is collision free
     Args:
        nearest_node (RRT_Node): nearest node on the tree to the sampled point
@@ -254,18 +306,33 @@ bool RRT::check_collision(RRT_Node &nearest_node, RRT_Node &new_node) {
 
     bool collision = false;
     // TODO: consider the cars dims with AABB
-
     // use AABB (axis-aligned bounding box)
     // refer here: https://www.realtimerendering.com/intersections.html
-    
-    float slope = ((nearest_node.x - new_node.x) / (nearest_node.y - new_node.y));
 
-    for (float point)
+    float dist = sqrt(pow(nearest_node.x - new_node.x, 2) + pow(nearest_node.y - new_node.y, 2));
+    float unit_vec_x = (new_node.x - nearest_node.x) / dist;
+    float unit_vec_y = (new_node.y - nearest_node.y) / dist;
+    int number_of_steps = 10;
+    float d_dist = dist / number_of_steps;
+    float d_x = unit_vec_x * d_dist;
+    float d_y = unit_vec_y * d_dist;
+    float x = nearest_node.x;
+    float y = nearest_node.y;
+
+    for(int i = 0; i < number_of_steps; i++)
+    {
+        x += d_x;
+        y += d_y;
+        if (is_xy_occupied(x, y)) {
+            collision = true;
+            break;
+        }
+    }
 
     return collision;
 }
 
-bool RRT::is_goal(RRT_Node &latest_added_node, double goal_x, double goal_y) {
+bool RRT::is_goal(RRT_Node &latest_added_node) {
     /*
     This method checks if the latest node added to the tree is close
     enough (defined by goal_threshold) to the goal so we can terminate
@@ -280,7 +347,7 @@ bool RRT::is_goal(RRT_Node &latest_added_node, double goal_x, double goal_y) {
 
     bool close_enough = false;
     double x, y, dist;
-    
+
     x = latest_added_node.x - goal_x;
     y = latest_added_node.y - goal_y;
     dist = sqrt(pow(x,2) + pow(y,2));
@@ -303,7 +370,7 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
       path (std::vector<RRT_Node>): the vector that represents the order of
          of the nodes traversed as the found path
     */
-    
+
     std::vector<RRT_Node> found_path;
     RRT_Node curr_node;
 
@@ -314,6 +381,29 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
     }
 
     return found_path;
+}
+
+bool RRT::is_xy_occupied(float x, float y){
+    /*
+    This method checks if the given x,y coordinate is occupied
+    */
+    int pos =  xy2ind(x, y);
+    if(occupancy_grid.data[pos] == 100){
+        return true;
+    }
+    else{
+        return false;
+    }
+}
+
+int RRT::xy2ind(float x, float y){
+    /*
+    This method converts x,y coordinates to an index in the occupancy grid
+    */
+    int x_ind = (int) (floor(y) - occupancy_grid.info.width/2);
+    int y_ind = (int) (floor(x));
+    int pos = (int) (x_ind * occupancy_grid.info.width + y_ind);
+    return pos;
 }
 
 // RRT* methods
@@ -346,7 +436,7 @@ double RRT::line_cost(RRT_Node &n1, RRT_Node &n2) {
 }
 
 std::vector<int> RRT::near(std::vector<RRT_Node> &tree, RRT_Node &node) {
-    // This method returns the set of Nodes in the neighborhood of a 
+    // This method returns the set of Nodes in the neighborhood of a
     // node.
     // Args:
     //   tree (std::vector<RRT_Node>): the current tree
