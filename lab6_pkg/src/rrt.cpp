@@ -424,13 +424,32 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
     cout << "Parent: " << curr_node.parent << endl;
     // cout << "Tree size: " << tree.size() << endl;
     // int count = 0;
+
+    visualization_msgs::Marker marker_path;
+    marker_path.header.frame_id = local_frame;
+    marker_path.action = visualization_msgs::Marker::ADD;
+    marker_path.type = visualization_msgs::Marker::LINE_LIST;
+    marker_path.id = 6;
+    marker_path.scale.x = 0.15;
+    marker_path.color.a = 0.5;
+    marker_path.color.r = 1.0;
+    marker_path.color.g = 0.0;
+    marker_path.color.b = 0.0;
+
+
     while (curr_node.parent != -1)
     {
         found_path.push_back(curr_node);
+        geometry_msgs::Point p;
+        p.x = curr_node.x;
+        p.y = curr_node.y;
+        marker_path.points.push_back(p);
         curr_node = tree[curr_node.parent];
         cout << "Parent: " << curr_node.parent << endl;
     }
     cout << "found path" << endl;
+
+    rrt_branch_vis_pub_->publish(marker_path);
 
     return found_path;
 }
