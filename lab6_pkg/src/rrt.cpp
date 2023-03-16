@@ -88,21 +88,12 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
 
     // visualization code
     rrt_goal_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_goal", 1);
-    rrt_node_vis_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("rrt_nodes", 1);
+    rrt_node_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_nodes", 1);
     rrt_path_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_path", 1);
     rrt_branch_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_branch", 1);
+    // rrt_branch_vis_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("rrt_branch", 1);
     rrt_cur_waypoint_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_waypoint", 1);
 
-
-    path_marker.header.frame_id = local_frame;
-    path_marker.action = visualization_msgs::msg::Marker::ADD;
-    path_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
-    path_marker.id = 1000;
-    path_marker.scale.x = 0.05;
-    path_marker.color.a = 1.0;
-    path_marker.color.r = 1.0;
-    path_marker.color.g = 0.0;
-    path_marker.color.b = 0.0;
 
     goal_marker.type = visualization_msgs::msg::Marker::SPHERE;
     goal_marker.id = marker_id;
@@ -114,6 +105,39 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     goal_marker.color.g = 0.0;
     goal_marker.color.b = 1.0;
     goal_marker.header.frame_id = local_frame;
+
+    node_marker.header.frame_id = local_frame;
+    node_marker.action = visualization_msgs::msg::Marker::ADD;
+    node_marker.type = visualization_msgs::msg::Marker::POINTS;
+    node_marker.id = 1002;
+    node_marker.scale.x = 0.03;
+    node_marker.scale.y = 0.03;
+    node_marker.scale.z = 0.03;
+    node_marker.color.a = 1.0;
+    node_marker.color.r = 1.0;   
+    node_marker.color.g = 0.0;
+    node_marker.color.b = 0.0;
+
+    path_marker.header.frame_id = local_frame;
+    path_marker.action = visualization_msgs::msg::Marker::ADD;
+    path_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
+    path_marker.id = 1000;
+    path_marker.scale.x = 0.08;
+    path_marker.color.a = 0.8;
+    path_marker.color.r = 0.0;   
+    path_marker.color.g = 1.0;
+    path_marker.color.b = 0.0;
+
+
+    branch_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
+    branch_marker.id = 2000;
+    branch_marker.scale.x = 0.1;
+    branch_marker.color.a = 0.5;
+    branch_marker.color.r = 0.0;
+    branch_marker.color.g = 0.0;
+    branch_marker.color.b = 1.0;
+    branch_marker.header.frame_id = local_frame;
+
 
     rrt_cur_waypoint_marker.type = visualization_msgs::msg::Marker::SPHERE;
     rrt_cur_waypoint_marker.id = 1001;
@@ -248,7 +272,7 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
     cout << "Reached goal" << endl;
     // cout << "tree size: " << tree.size() << endl;
     rrt_path = find_path(tree, steer_node);
-
+    visualize_tree(tree);
     publish_drive();
 }
 
@@ -375,7 +399,6 @@ void RRT::publish_drive(){
     cout << "Published drive message" << endl;
 
 }
-
 
 RRT_Node RRT::nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_point) {
     /*
@@ -538,10 +561,12 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
     while (curr_node.parent_idx != -1)
     {
         found_path.push_back(curr_node);
-        // geometry_msgs::msg::Point p;
-        // p.x = curr_node.x;
-        // p.y = curr_node.y;
-        // path_marker.points.push_back(p);
+
+        geometry_msgs::msg::Point p;
+        p.x = curr_node.x;
+        p.y = curr_node.y;
+        path_marker.points.push_back(p);
+
         curr_node = tree[curr_node.parent_idx];
         cout << "parent_idx: " << curr_node.parent_idx << endl;
     }
@@ -555,6 +580,75 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
 
     return found_path;
 }
+
+void RRT::visualize_tree(std::vector<RRT_Node> &tree){   
+
+    
+
+    node_marker.points.clear();
+    branch_marker.points.clear();
+
+    for (auto node : tree)
+    {
+        geometry_msgs::msg::Point p;
+        p.x = node.x;
+        p.y = node.y;
+        node_marker.points.push_back(p);
+        for (auto child : node.children_idx)
+        {
+            branch_marker.points.push_back(p);
+            geometry_msgs::msg::Point p_child;
+            p_child.x = tree[child].x;
+            p_child.y = tree[child].y;
+            branch_marker.points.push_back(p_child);
+        }
+
+    }
+
+    rrt_node_vis_pub_->publish(node_marker);
+    rrt_branch_vis_pub_->publish(branch_marker);
+}
+
+
+// void RRT::visualize_tree(std::vector<RRT_Node> &tree){   
+
+//     int m_id = 2000;
+    
+//     visualization_msgs::msg::Marker branch_marker;
+//     branch_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
+//     branch_marker.id = 2000;
+//     branch_marker.scale.x = 0.1;
+//     branch_marker.color.a = 0.5;
+//     branch_marker.color.r = 0.0;
+//     branch_marker.color.g = 0.0;
+//     branch_marker.color.b = 1.0;
+//     branch_marker.header.frame_id = local_frame;
+
+//     node_marker.points.clear();
+
+//     for (auto node : tree)
+//     {
+//         geometry_msgs::msg::Point p;
+//         p.x = node.x;
+//         p.y = node.y;
+//         node_marker.points.push_back(p);
+//         for (auto child : node.children_idx)
+//         {
+//             branch_marker.points.clear();
+//             branch_marker.id = m_id++;
+//             branch_marker.points.push_back(p);
+//             geometry_msgs::msg::Point p_child;
+//             p_child.x = tree[child].x;
+//             p_child.y = tree[child].y;
+//             branch_marker.points.push_back(p_child);
+//             branch_marker_arr.markers.push_back(branch_marker);
+//         }
+
+//     }
+
+//     rrt_node_vis_pub_->publish(node_marker);
+//     rrt_branch_vis_pub_->publish(branch_marker_arr);
+// }
 
 
 bool RRT::is_xy_occupied(float x, float y){

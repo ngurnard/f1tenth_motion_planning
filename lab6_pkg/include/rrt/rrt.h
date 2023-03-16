@@ -56,8 +56,9 @@ private:
 
     // visualization publishers
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_goal_vis_pub_;          // goal 
-    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr rrt_node_vis_pub_;     // every node
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_node_vis_pub_;     // every node
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_path_vis_pub_;          // final path
+    // rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr rrt_branch_vis_pub_;        // all branches
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_branch_vis_pub_;        // all branches
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_cur_waypoint_vis_pub_;  // tracked waypoint
 
@@ -65,6 +66,7 @@ private:
     visualization_msgs::msg::Marker goal_marker;
     visualization_msgs::msg::Marker node_marker;
     visualization_msgs::msg::Marker path_marker;
+    // visualization_msgs::msg::MarkerArray branch_marker_arr;
     visualization_msgs::msg::Marker branch_marker;
     visualization_msgs::msg::Marker rrt_cur_waypoint_marker;
 
@@ -114,6 +116,7 @@ private:
     void waypoint_callback(const interfaces_hot_wheels::msg::Waypoint::ConstSharedPtr waypoint);
     // publish drive
     void publish_drive();
+    void visualize_tree(std::vector<RRT_Node> &tree);
 
     // RRT methods
     std::vector<double> sample();
