@@ -11,17 +11,18 @@ RRT::~RRT() {
 }
 
 // Constructor of the RRT class
-RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
-            // pose_topic("/pf/viz/inferred_pose"), scan_topic("/scan"), cur_wpt_topic("/waypoint"),
-            // drive_topic("/drive"), occ_grid_topic("/occ_grid"), local_frame("/ego_racecar/base_link")
+RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0),
+            pose_topic("/pf/viz/inferred_pose"), scan_topic("/scan"), cur_wpt_topic("/waypoint"),
+            drive_topic("/drive"), occ_grid_topic("/occ_grid"), local_frame("/ego_racecar/base_link"),
+            grid_res_m(0.1), grid_width_m(2.0), grid_height_m(3.0)
 {
-    // ROS topics
-    pose_topic = "/pf/viz/inferred_pose";
-    scan_topic = "/scan";
-    cur_wpt_topic = "/waypoint";
-    drive_topic = "/drive";
-    occ_grid_topic = "/occ_grid";
-    local_frame = "/ego_racecar/laser_model";
+    // // ROS topics
+    // pose_topic = "/pf/viz/inferred_pose";
+    // scan_topic = "/scan";
+    // cur_wpt_topic = "/waypoint";
+    // drive_topic = "/drive";
+    // occ_grid_topic = "/occ_grid";
+    // local_frame = "/ego_racecar/laser_model";
 
     // ROS publishers
     drive_pub_ = this->create_publisher<ackermann_msgs::msg::AckermannDriveStamped>(drive_topic, 1);
@@ -29,26 +30,20 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
 
     // ROS params
     auto param_desc = rcl_interfaces::msg::ParameterDescriptor{};
-    param_desc.description = "Resolution of the occupancy grid in meters";
-    this->declare_parameter("resolution", 0.1, param_desc);
-    param_desc.description = "Width of the occupancy grid in meters";
-    this->declare_parameter("width_m", 2.0, param_desc);
-    param_desc.description = "Height of the occupancy grid in meters";
-    this->declare_parameter("height_m", 5.0, param_desc);
     param_desc.description = "Lookahead distance in meters";
     this->declare_parameter("L", 1.0, param_desc);
     param_desc.description = "Kp value";
-    this->declare_parameter("Kp", 0.1);
+    this->declare_parameter("Kp", 0.2);
     param_desc.description = "Velocity";
-    this->declare_parameter("v", 0.0);
+    this->declare_parameter("v", 0.5);
 
     // // TODO: get the actual car width
     // param_desc.description = "Width in the car in meters";
     // this->declare_parameter("car_width", .15, param_desc);
 
-    this->goal_x = this->get_parameter("height_m").get_parameter_value().get<float>();
-    goal_threshold = this->get_parameter("resolution").get_parameter_value().get<float>() / 2.0;
-    max_expansion_dist = this->get_parameter("resolution").get_parameter_value().get<float>() / 10.0;
+    this->goal_x = grid_height_m;
+    goal_threshold = 0.1;//grid_res_m / 2.0;
+    max_expansion_dist = 0.1;//grid_res_m / 10.0;
 
     // ROS subscribers
     // TODO: create subscribers as you need
@@ -62,31 +57,32 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     // random generator
     std::uniform_real_distribution<> x_temp(
         0.0,
-        this->get_parameter("height_m").get_parameter_value().get<float>());
+        grid_height_m);
     std::uniform_real_distribution<> y_temp(
-        -this->get_parameter("width_m").get_parameter_value().get<float>(),
-         this->get_parameter("width_m").get_parameter_value().get<float>());
+        -grid_width_m,
+         grid_width_m);
     x_dist.param(x_temp.param());
     y_dist.param(y_temp.param());
 
     // occupancy grid
     occupancy_grid.header.frame_id = local_frame;
     occupancy_grid.info.origin.position.x = 0.0;
-    occupancy_grid.info.origin.position.y = this->get_parameter("width_m").get_parameter_value().get<float>()/2.0;
+    occupancy_grid.info.origin.position.y = grid_width_m/2.0;
     occupancy_grid.info.origin.position.z = 0.0;
     occupancy_grid.info.origin.orientation.x = 0.0;
     occupancy_grid.info.origin.orientation.y = 0.0;
     occupancy_grid.info.origin.orientation.z = -sqrt(2.0)/2.0;
     occupancy_grid.info.origin.orientation.w = sqrt(2.0)/2.0;
 
-    occupancy_grid.info.resolution = this->get_parameter("resolution").get_parameter_value().get<float>();
-    float width = (this->get_parameter("width_m").get_parameter_value().get<float>() / occupancy_grid.info.resolution);
-    float height = (this->get_parameter("height_m").get_parameter_value().get<float>() / occupancy_grid.info.resolution);
+    occupancy_grid.info.resolution = grid_res_m;
+    float width = (grid_width_m / occupancy_grid.info.resolution);
+    float height = (grid_height_m / occupancy_grid.info.resolution);
     occupancy_grid.info.width =  width;
     occupancy_grid.info.height = height;
+    grid_theta = atan2(height, width/2.0);
 
     // store the top corner distances (max possible)
-    max_occ_dist = sqrt(pow(this->get_parameter("width_m").get_parameter_value().get<float>(), 2)/4.0 + pow(this->get_parameter("height_m").get_parameter_value().get<float>(), 2));
+    max_occ_dist = sqrt(pow(grid_width_m, 2)/4.0 + pow(grid_height_m, 2));
 
     RCLCPP_INFO(rclcpp::get_logger("RRT"), "%s\n", "Created new RRT Object.");
 
@@ -94,6 +90,40 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     rrt_goal_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_goal", 1);
     rrt_node_vis_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("rrt_nodes", 1);
     rrt_branch_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_path", 1);
+    rrt_cur_waypoint_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_waypoint", 1);
+
+
+    marker_path.header.frame_id = local_frame;
+    marker_path.action = visualization_msgs::msg::Marker::ADD;
+    marker_path.type = visualization_msgs::msg::Marker::LINE_LIST;
+    marker_path.id = 1000;
+    marker_path.scale.x = 0.05;
+    marker_path.color.a = 1.0;
+    marker_path.color.r = 1.0;
+    marker_path.color.g = 0.0;
+    marker_path.color.b = 0.0;
+
+    goal_marker.type = visualization_msgs::msg::Marker::SPHERE;
+    goal_marker.id = marker_id;
+    goal_marker.scale.x = 0.15;
+    goal_marker.scale.y = 0.15;
+    goal_marker.scale.z = 0.15;
+    goal_marker.color.a = 0.5;
+    goal_marker.color.r = 1.0;
+    goal_marker.color.g = 0.0;
+    goal_marker.color.b = 1.0;
+    goal_marker.header.frame_id = local_frame;
+
+    rrt_cur_waypoint_marker.type = visualization_msgs::msg::Marker::SPHERE;
+    rrt_cur_waypoint_marker.id = 1001;
+    rrt_cur_waypoint_marker.scale.x = 0.1;
+    rrt_cur_waypoint_marker.scale.y = 0.1;
+    rrt_cur_waypoint_marker.scale.z = 0.1;
+    rrt_cur_waypoint_marker.color.a = 1.0;
+    rrt_cur_waypoint_marker.color.r = 0.1;
+    rrt_cur_waypoint_marker.color.g = 0.1;
+    rrt_cur_waypoint_marker.color.b = 0.1;
+    rrt_cur_waypoint_marker.header.frame_id = local_frame;
 }
 
 void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg) {
@@ -115,14 +145,14 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
     {  
         occupancy_grid.data.push_back(0);
     }
-    for(int it=0;it<occupancy_grid.info.width*occupancy_grid.info.height;it+=occupancy_grid.info.width)
-    {  
-        occupancy_grid.data[it]=25; // y is lighter
-    }
-    for(int it=0;it<occupancy_grid.info.width;it++)
-    {  
-        occupancy_grid.data[it] = 75; // x is darker
-    }
+    // for(int it=0;it<occupancy_grid.info.width*occupancy_grid.info.height;it+=occupancy_grid.info.width)
+    // {  
+    //     occupancy_grid.data[it]=25; // y is lighter
+    // }
+    // for(int it=0;it<occupancy_grid.info.width;it++)
+    // {  
+    //     occupancy_grid.data[it] = 75; // x is darker
+    // }
 
     float rad90 = 90.0 * M_PI / 180.0;
     int index_neg90 = (int) ((-rad90 - scan_msg->angle_min) / scan_msg->angle_increment);
@@ -141,13 +171,15 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
             int rtl = (int) (scan_msg->ranges[i] * sin(scan_msg->angle_min + i * scan_msg->angle_increment) / occupancy_grid.info.resolution);
             // the origin of the grid is the bottom left so adjust from car frame calcs
             // cout << "angle" << (scan_msg->angle_min + i * scan_msg->angle_increment)*(180.0/M_PI) << endl;
-            // cout << "rtl: " << rtl << endl;
-            // cout << "fwd: " << fwd << endl;
-            int y = -(rtl - occupancy_grid.info.width/2);
-            int x = fwd;
-            // cout << "x: " << x << endl;
-            // cout << "y: " << y << endl;
-            occupancy_grid.data[x*occupancy_grid.info.width + y] = 100;
+            // cout << (scan_msg->ranges[i] * sin(scan_msg->angle_min + i * scan_msg->angle_increment) / occupancy_grid.info.resolution) << " rtl: " << rtl << endl;
+            // cout << (scan_msg->ranges[i] * cos(scan_msg->angle_min + i * scan_msg->angle_increment) / occupancy_grid.info.resolution) << " fwd: " << fwd << endl;
+            if(fwd < occupancy_grid.info.height && abs(rtl) < occupancy_grid.info.width/2){
+                int y = -(rtl - occupancy_grid.info.width/2);
+                int x = fwd;
+                // cout << "x: " << x << endl;
+                // cout << "y: " << y << endl;
+                occupancy_grid.data[x*occupancy_grid.info.width + y] = 100;
+            }
         }
     }
     
@@ -187,13 +219,20 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
     while (!is_goal(tree.back()))  //unsure of terminating codition
     {
         std::vector<double> sample_node = sample(); // we're sure its in free space
-        int nearest_node = nearest(tree, sample_node);
-        steer_node = steer(tree[nearest_node], sample_node);
-        // check if steer node is free then push back
+        RRT_Node nearest_node = nearest(tree, sample_node);
+        steer_node = steer(nearest_node, sample_node);
         if(is_xy_occupied(steer_node.x, steer_node.y))
         {
+            // check if steer node is free
             continue;
         }
+        if(check_collision(nearest_node, steer_node))
+        {
+            // check for collision between nearest node and steer node (sample node, but closer)
+            continue;
+        }
+        
+        
         steer_node.is_root = false;
         steer_node.index = count;
         tree.push_back(steer_node);
@@ -221,28 +260,41 @@ void RRT::waypoint_callback(const interfaces_hot_wheels::msg::Waypoint::ConstSha
     */
     // cout << "waypoint callback" << endl;     
     
-    visualization_msgs::msg::Marker goal_marker;
-    goal_marker.type = visualization_msgs::msg::Marker::SPHERE;
-    goal_marker.id = marker_id;
-    goal_marker.scale.x = 0.15;
-    goal_marker.scale.y = 0.15;
-    goal_marker.scale.z = 0.15;
-    goal_marker.color.a = 0.5;
-    goal_marker.color.r = 1.0;
-    goal_marker.color.g = 0.0;
-    goal_marker.color.b = 1.0;
-    goal_marker.header.frame_id = local_frame;
-    
     // check if the waypoint is outside the grid
+
+    // if(waypoint->x < grid_height_m && abs(waypoint->y) < grid_width_m/2.0) {
+    //     // waypoint is inside the grid
+    //     goal_x = waypoint->x;
+    //     goal_y = waypoint->y;
+    // }
+    // else 
+    // {
+    //     float waypoint_theta = atan2(waypoint->y, waypoint->x);
+    //     if (waypoint_theta > grid_theta) {
+    //         goal_x = grid_height_m;
+    //         goal_y = grid_height_m * waypoint->y / waypoint->x;
+    //     }
+
+    //     else {
+    //         goal_x = grid_width_m/2.0 * waypoint->x / waypoint->y;
+    //         goal_y = sign(waypoint->y)*grid_width_m/2.0;
+    //     }
+    // }
+
     float pt_dist = std::sqrt(std::pow(waypoint->x, 2) + std::pow(waypoint->y, 2));
     // use similar triangles to get the distance from the origin of the car projected on the grid
-    float y_dist_temp = this->get_parameter("height_m").get_parameter_value().get<float>() * waypoint->y / std::abs(waypoint->x);
+    if (abs(waypoint->y) >  grid_width_m) {
+        // project onto the grid since outside of the grid
+        goal_x = grid_width_m * waypoint->x / std::abs(waypoint->y);
+        goal_y = grid_width_m;
+    }
+    float y_dist_temp = grid_height_m * waypoint->y / std::abs(waypoint->x);
     // get the hypotenuse in the grid along the unit vector to the waypoint
-    float grid_dist = std::sqrt(std::pow(this->get_parameter("height_m").get_parameter_value().get<float>(), 2) +
+    float grid_dist = std::sqrt(std::pow(grid_height_m, 2) +
                                 std::pow(y_dist_temp, 2));
     if (pt_dist > grid_dist) {
         // project onto the grid since outside of the grid
-        goal_x = this->get_parameter("height_m").get_parameter_value().get<float>();
+        goal_x = grid_height_m;
         goal_y = y_dist_temp;
     } else {
         // already inside of the grid
@@ -304,6 +356,8 @@ void RRT::publish_drive(){
         if (dist > this->get_parameter("L").get_parameter_value().get<float>())
         {
             theta = 2 * waypoint.y/pow(dist, 2);
+            rrt_cur_waypoint_marker.pose.position.x = waypoint.x;
+            rrt_cur_waypoint_marker.pose.position.y = waypoint.y;
             break;
         }
     }
@@ -312,12 +366,14 @@ void RRT::publish_drive(){
     drive_msg.drive.steering_angle = this->get_parameter("Kp").get_parameter_value().get<float>() * theta;
     drive_msg.drive.speed = this->get_parameter("v").get_parameter_value().get<float>();
     drive_pub_->publish(drive_msg);
+    rrt_cur_waypoint_vis_pub_->publish(rrt_cur_waypoint_marker);
 
     cout << "Published drive message" << endl;
+
 }
 
 
-int RRT::nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_point) {
+RRT_Node RRT::nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_point) {
     /*
     This method returns the nearest node on the tree to the sampled point
     Args:
@@ -327,7 +383,7 @@ int RRT::nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_point
         nearest_node (int): index of nearest node on the tree
     */
 
-    int nearest_node = 0;
+    RRT_Node nearest_node = tree.front();
     double nearest_dist = MAXFLOAT;
     for (auto node : tree)
     {
@@ -336,7 +392,7 @@ int RRT::nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_point
         double dist = sqrt(pow(x,2) - pow(y,2));
         if(dist < nearest_dist)
         {
-            nearest_node = node.index;
+            nearest_node = node;
             nearest_dist = dist;
         }
     }
@@ -401,7 +457,7 @@ bool RRT::check_collision(RRT_Node &nearest_node, RRT_Node &new_node) {
     float dist = sqrt(pow(nearest_node.x - new_node.x, 2) + pow(nearest_node.y - new_node.y, 2));
     float unit_vec_x = (new_node.x - nearest_node.x) / dist;
     float unit_vec_y = (new_node.y - nearest_node.y) / dist;
-    int number_of_steps = 75;
+    int number_of_steps = 15;
     float d_dist = dist / number_of_steps;
     float d_x = unit_vec_x * d_dist;
     float d_y = unit_vec_y * d_dist;
@@ -467,29 +523,29 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
     // cout << "Tree size: " << tree.size() << endl;
     // int count = 0;
 
-    visualization_msgs::msg::Marker marker_path;
-    marker_path.header.frame_id = local_frame;
-    marker_path.action = visualization_msgs::msg::Marker::ADD;
-    marker_path.type = visualization_msgs::msg::Marker::LINE_LIST;
-    marker_path.id = 1000;
-    marker_path.scale.x = 0.05;
-    marker_path.color.a = 0.9;
-    marker_path.color.r = 0.0;
-    marker_path.color.g = 1.0;
-    marker_path.color.b = 1.0;
+    marker_path.points.clear();
+
+    geometry_msgs::msg::Point p;
+    p.x = curr_node.x;
+    p.y = curr_node.y;
+    marker_path.points.push_back(p);
 
 
     while (curr_node.parent != -1)
     {
         found_path.push_back(curr_node);
-        geometry_msgs::msg::Point p;
-        p.x = curr_node.x;
-        p.y = curr_node.y;
-        marker_path.points.push_back(p);
+        // geometry_msgs::msg::Point p;
+        // p.x = curr_node.x;
+        // p.y = curr_node.y;
+        // marker_path.points.push_back(p);
         curr_node = tree[curr_node.parent];
         cout << "Parent: " << curr_node.parent << endl;
     }
     cout << "found path" << endl;
+
+    p.x = curr_node.x;
+    p.y = curr_node.y;
+    marker_path.points.push_back(p);
 
     rrt_branch_vis_pub_->publish(marker_path);
 
@@ -564,3 +620,7 @@ std::vector<int> RRT::near(std::vector<RRT_Node> &tree, RRT_Node &node) {
     return neighborhood;
 }
 */
+
+float sign(float x) {
+    return (x > 0) ? 1.0 : ((x < 0) ? -1.0 : 0.0);
+}

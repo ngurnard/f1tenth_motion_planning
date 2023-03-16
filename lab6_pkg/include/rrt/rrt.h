@@ -57,6 +57,12 @@ private:
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_goal_vis_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr rrt_node_vis_pub_;
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_branch_vis_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_cur_waypoint_vis_pub_;
+
+    // visualization markers
+    visualization_msgs::msg::Marker marker_path;
+    visualization_msgs::msg::Marker goal_marker;
+    visualization_msgs::msg::Marker rrt_cur_waypoint_marker;
 
     // random generator, use this
     std::mt19937 gen;
@@ -64,6 +70,8 @@ private:
     std::uniform_real_distribution<> y_dist;
     
     // occupancy grid
+    float grid_width_m, grid_height_m, grid_res_m;
+    float grid_theta;
     nav_msgs::msg::OccupancyGrid occupancy_grid;
     float max_occ_dist;
     bool is_xy_occupied(float x, float y);
@@ -105,7 +113,7 @@ private:
 
     // RRT methods
     std::vector<double> sample();
-    int nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_point);
+    RRT_Node nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_point);
     RRT_Node steer(RRT_Node &nearest_node, std::vector<double> &sampled_point);
     bool check_collision(RRT_Node &nearest_node, RRT_Node &new_node);
     bool is_goal(RRT_Node &latest_added_node);
@@ -117,3 +125,4 @@ private:
 
 };
 
+float sign(float x);

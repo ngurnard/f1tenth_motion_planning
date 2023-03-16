@@ -13,9 +13,9 @@ def generate_launch_description():
             executable='pose_fake_pub_node',
             name='pose_fake_pub_node',
         ),
-        # Node(
-        #     package='lab6_pkg',
-        #     executable='rrt_node',
-        #     name='rrt_node'
-        # ),
+        Node(
+            package='lab6_pkg',
+            executable='rrt_node',
+            name='rrt_node'
+        ),
     ])
