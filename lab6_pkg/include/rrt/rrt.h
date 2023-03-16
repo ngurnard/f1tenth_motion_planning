@@ -46,7 +46,7 @@ public:
 private:
 
     // TODO: add the publishers and subscribers you need
-    rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr pose_sub_;
+    rclcpp::Subscription<geometry_msgs::msg::PoseStamped>::SharedPtr pose_sub_;
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr scan_sub_;
     rclcpp::Subscription<interfaces_hot_wheels::msg::Waypoint>::SharedPtr waypoint_sub_;
     
@@ -56,7 +56,7 @@ private:
     // visualization publishers
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_goal_vis_pub_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr rrt_node_vis_pub_;
-    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr rrt_branch_vis_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_branch_vis_pub_;
 
     // random generator, use this
     std::mt19937 gen;
@@ -96,7 +96,7 @@ private:
 
     // callbacks
     // where rrt actually happens
-    void pose_callback(const nav_msgs::msg::Odometry::ConstSharedPtr pose_msg);
+    void pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr pose_msg);
     // updates occupancy grid
     void scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_msg);
     void waypoint_callback(const interfaces_hot_wheels::msg::Waypoint::ConstSharedPtr waypoint);
