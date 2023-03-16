@@ -86,6 +86,7 @@ private:
     // threshold variables
     double goal_threshold;
     double max_expansion_dist;
+    double neighbor_threshold;
 
     // tree variables
     std::vector<RRT_Node> tree;

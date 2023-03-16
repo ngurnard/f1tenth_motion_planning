@@ -44,6 +44,7 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     this->goal_x = grid_height_m;
     goal_threshold = 0.1;//grid_res_m / 2.0;
     max_expansion_dist = 0.1;//grid_res_m / 10.0;
+    neighbor_threshold = 0.05;
 
     // ROS subscribers
     // TODO: create subscribers as you need
@@ -675,9 +676,9 @@ int RRT::xy2ind(float x, float y){
 }
 
 // RRT* methods
-/*
+
 double RRT::cost(std::vector<RRT_Node> &tree, RRT_Node &node) {
-    // This method returngen((std::random_device())()s the cost associated with a node
+    // This method returns the cost associated with a node
     // Args:
     //    tree (std::vector<RRT_Node>): the current tree
     //    node (RRT_Node): the node the cost is calculated for
@@ -685,7 +686,7 @@ double RRT::cost(std::vector<RRT_Node> &tree, RRT_Node &node) {
     //    cost (double): the cost value associated with the node
 
     double cost = 0;
-    // TODO: fill in this method
+    cost = tree[node.parent_idx].cost + line_cost(tree[node.parent_idx], node);
 
     return cost;
 }
@@ -699,7 +700,12 @@ double RRT::line_cost(RRT_Node &n1, RRT_Node &n2) {
     //    cost (double): the cost value associated with the path
 
     double cost = 0;
-    // TODO: fill in this method
+    double x, y;
+
+    x = n1.x - n2.x;
+    y = n1.y - n2.y;
+    cost = sqrt(pow(x,2) + pow(y,2));
+    
 
     return cost;
 }
@@ -714,11 +720,18 @@ std::vector<int> RRT::near(std::vector<RRT_Node> &tree, RRT_Node &node) {
     //   neighborhood (std::vector<int>): the index of the nodes in the neighborhood
 
     std::vector<int> neighborhood;
-    // TODO:: fill in this method
+    
+    for (auto curr_node : tree)
+    {
+        if (line_cost(curr_node, node) < neighbor_threshold)
+        {
+            neighborhood.push_back(curr_node.index);
+        }
+    } 
 
     return neighborhood;
 }
-*/
+
 
 float sign(float x) {
     return (x > 0) ? 1.0 : ((x < 0) ? -1.0 : 0.0);
