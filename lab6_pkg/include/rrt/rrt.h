@@ -32,8 +32,9 @@ using namespace std;
 typedef struct RRT_Node {
     double x, y;
     double cost; // only used for RRT*
-    int parent; // index of parent node in the tree vector
+    int parent_idx; // index of parent node in the tree vector
     int index; // index of this node in the tree vector
+    std::vector<int> children_idx;
     bool is_root = false;
 } RRT_Node;
 
@@ -54,14 +55,17 @@ private:
     rclcpp::Publisher<nav_msgs::msg::OccupancyGrid >::SharedPtr occ_grid_pub_;
 
     // visualization publishers
-    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_goal_vis_pub_;
-    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr rrt_node_vis_pub_;
-    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_branch_vis_pub_;
-    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_cur_waypoint_vis_pub_;
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_goal_vis_pub_;          // goal 
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr rrt_node_vis_pub_;     // every node
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_path_vis_pub_;          // final path
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_branch_vis_pub_;        // all branches
+    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_cur_waypoint_vis_pub_;  // tracked waypoint
 
     // visualization markers
-    visualization_msgs::msg::Marker marker_path;
     visualization_msgs::msg::Marker goal_marker;
+    visualization_msgs::msg::Marker node_marker;
+    visualization_msgs::msg::Marker path_marker;
+    visualization_msgs::msg::Marker branch_marker;
     visualization_msgs::msg::Marker rrt_cur_waypoint_marker;
 
     // random generator, use this

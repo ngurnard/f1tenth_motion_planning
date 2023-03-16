@@ -89,19 +89,20 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     // visualization code
     rrt_goal_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_goal", 1);
     rrt_node_vis_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("rrt_nodes", 1);
-    rrt_branch_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_path", 1);
+    rrt_path_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_path", 1);
+    rrt_branch_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_branch", 1);
     rrt_cur_waypoint_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_waypoint", 1);
 
 
-    marker_path.header.frame_id = local_frame;
-    marker_path.action = visualization_msgs::msg::Marker::ADD;
-    marker_path.type = visualization_msgs::msg::Marker::LINE_LIST;
-    marker_path.id = 1000;
-    marker_path.scale.x = 0.05;
-    marker_path.color.a = 1.0;
-    marker_path.color.r = 1.0;
-    marker_path.color.g = 0.0;
-    marker_path.color.b = 0.0;
+    path_marker.header.frame_id = local_frame;
+    path_marker.action = visualization_msgs::msg::Marker::ADD;
+    path_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
+    path_marker.id = 1000;
+    path_marker.scale.x = 0.05;
+    path_marker.color.a = 1.0;
+    path_marker.color.r = 1.0;
+    path_marker.color.g = 0.0;
+    path_marker.color.b = 0.0;
 
     goal_marker.type = visualization_msgs::msg::Marker::SPHERE;
     goal_marker.id = marker_id;
@@ -209,7 +210,7 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
     root.x = 0;
     root.y = 0;
     root.cost = 0.0;
-    root.parent = -1;
+    root.parent_idx = -1;
     root.is_root = true;
     root.index = 0;
 
@@ -236,7 +237,9 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
         steer_node.is_root = false;
         steer_node.index = count;
         tree.push_back(steer_node);
+        nearest_node.children_idx.push_back(steer_node.index);
         count++;
+
         // cout << "sample node: " << sample_node[0] << ", " << sample_node[1] << endl;
         // cout << "steer node: " << steer_node.x << ", " << steer_node.y << endl;
         // cout << "tree end: " << tree.back().x << ", " << tree.back().y << endl;
@@ -245,6 +248,7 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
     cout << "Reached goal" << endl;
     // cout << "tree size: " << tree.size() << endl;
     rrt_path = find_path(tree, steer_node);
+
     publish_drive();
 }
 
@@ -433,7 +437,7 @@ RRT_Node RRT::steer(RRT_Node &nearest_node, std::vector<double> &sampled_point) 
         new_node.x = sampled_point[0];
         new_node.y = sampled_point[1];
     }
-    new_node.parent = nearest_node.index;
+    new_node.parent_idx = nearest_node.index;
 
     return new_node;
 }
@@ -519,38 +523,39 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
 
     std::vector<RRT_Node> found_path;
     RRT_Node curr_node = latest_added_node;
-    cout << "Parent: " << curr_node.parent << endl;
+    cout << "parent_idx: " << curr_node.parent_idx << endl;
     // cout << "Tree size: " << tree.size() << endl;
     // int count = 0;
 
-    marker_path.points.clear();
+    path_marker.points.clear();
 
     geometry_msgs::msg::Point p;
     p.x = curr_node.x;
     p.y = curr_node.y;
-    marker_path.points.push_back(p);
+    path_marker.points.push_back(p);
 
 
-    while (curr_node.parent != -1)
+    while (curr_node.parent_idx != -1)
     {
         found_path.push_back(curr_node);
         // geometry_msgs::msg::Point p;
         // p.x = curr_node.x;
         // p.y = curr_node.y;
-        // marker_path.points.push_back(p);
-        curr_node = tree[curr_node.parent];
-        cout << "Parent: " << curr_node.parent << endl;
+        // path_marker.points.push_back(p);
+        curr_node = tree[curr_node.parent_idx];
+        cout << "parent_idx: " << curr_node.parent_idx << endl;
     }
     cout << "found path" << endl;
 
     p.x = curr_node.x;
     p.y = curr_node.y;
-    marker_path.points.push_back(p);
+    path_marker.points.push_back(p);
 
-    rrt_branch_vis_pub_->publish(marker_path);
+    rrt_path_vis_pub_->publish(path_marker);
 
     return found_path;
 }
+
 
 bool RRT::is_xy_occupied(float x, float y){
     /*
