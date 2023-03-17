@@ -14,7 +14,7 @@ RRT::~RRT() {
 RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0),
             pose_topic("/pf/viz/inferred_pose"), scan_topic("/scan"), cur_wpt_topic("/waypoint"),
             drive_topic("/drive"), occ_grid_topic("/occ_grid"), local_frame("/ego_racecar/base_link"),
-            grid_res_m(0.1), grid_width_m(2.0), grid_height_m(3.0)
+            grid_res_m(0.1), grid_width_m(2.0), grid_height_m(3.0), inflate(2), MAX_ITER(1000)
 {
     // // ROS topics
     // pose_topic = "/pf/viz/inferred_pose";
@@ -33,7 +33,7 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     param_desc.description = "Lookahead distance in meters";
     this->declare_parameter("L", 1.0, param_desc);
     param_desc.description = "Kp value";
-    this->declare_parameter("Kp", 0.2);
+    this->declare_parameter("Kp", 0.3);
     param_desc.description = "Velocity";
     this->declare_parameter("v", 0.5);
 
@@ -60,8 +60,8 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
         0.0,
         grid_height_m);
     std::uniform_real_distribution<> y_temp(
-        -grid_width_m,
-         grid_width_m);
+        -grid_width_m/2.0,
+         grid_width_m/2.0);
     x_dist.param(x_temp.param());
     y_dist.param(y_temp.param());
 
@@ -91,8 +91,8 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     rrt_goal_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_goal", 1);
     rrt_node_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_nodes", 1);
     rrt_path_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_path", 1);
-    rrt_branch_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_branch", 1);
-    // rrt_branch_vis_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("rrt_branch", 1);
+    // rrt_branch_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_branch", 1);
+    rrt_branch_vis_pub_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("rrt_branch", 1);
     rrt_cur_waypoint_vis_pub_ = this->create_publisher<visualization_msgs::msg::Marker>("rrt_waypoint", 1);
 
 
@@ -130,14 +130,14 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     path_marker.color.b = 0.0;
 
 
-    branch_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
-    branch_marker.id = 2000;
-    branch_marker.scale.x = 0.1;
-    branch_marker.color.a = 0.5;
-    branch_marker.color.r = 0.0;
-    branch_marker.color.g = 0.0;
-    branch_marker.color.b = 1.0;
-    branch_marker.header.frame_id = local_frame;
+    // branch_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
+    // branch_marker.id = 2000;
+    // branch_marker.scale.x = 0.1;
+    // branch_marker.color.a = 0.5;
+    // branch_marker.color.r = 0.0;
+    // branch_marker.color.g = 0.0;
+    // branch_marker.color.b = 1.0;
+    // branch_marker.header.frame_id = local_frame;
 
 
     rrt_cur_waypoint_marker.type = visualization_msgs::msg::Marker::SPHERE;
@@ -161,13 +161,13 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
     */
 
     // TODO: update your occupancy grid
-    cout << "scan callback" << endl;
+    // cout << "scan callback" << endl;
     // occupancy_grid.info.map_load_time = scan_msg->header.stamp;
     // occupancy_grid.header.stamp = scan_msg->header.stamp;
     // occupancy_grid.header.frame_id = local_frame;
 
     occupancy_grid.data.clear();
-    for(int it=0;it<occupancy_grid.info.width*occupancy_grid.info.height;it++)
+    for (int it=0;it<occupancy_grid.info.width*occupancy_grid.info.height;it++)
     {  
         occupancy_grid.data.push_back(0);
     }
@@ -186,33 +186,56 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
     // cout << "index neg90: " << index_neg90 << endl;
     // cout << "index pos90: " << index_pos90 << endl;
 
-    for(int i=index_neg90; i< index_pos90; i++)
+    for (int i=index_neg90; i< index_pos90; i++)
     {  
         // cout << "i: " << i << endl;
-        if(scan_msg->ranges[i] < max_occ_dist)
+        if (scan_msg->ranges[i] < max_occ_dist)
         {
             // cout << i << endl;
             // forward and right to left on the grid
-            int fwd = (int) (scan_msg->ranges[i] * cos(scan_msg->angle_min + i * scan_msg->angle_increment) / occupancy_grid.info.resolution);
-            int rtl = (int) (scan_msg->ranges[i] * sin(scan_msg->angle_min + i * scan_msg->angle_increment) / occupancy_grid.info.resolution);
+            // float fwd = (scan_msg->ranges[i] * cos(scan_msg->angle_min + i * scan_msg->angle_increment) / occupancy_grid.info.resolution);
+            // float rtl = (scan_msg->ranges[i] * sin(scan_msg->angle_min + i * scan_msg->angle_increment) / occupancy_grid.info.resolution);
+            
+            float fwd = scan_msg->ranges[i] * cos(scan_msg->angle_min + i * scan_msg->angle_increment);
+            float rtl = scan_msg->ranges[i] * sin(scan_msg->angle_min + i * scan_msg->angle_increment);
+            
             // the origin of the grid is the bottom left so adjust from car frame calcs
             // cout << "angle" << (scan_msg->angle_min + i * scan_msg->angle_increment)*(180.0/M_PI) << endl;
             // cout << (scan_msg->ranges[i] * sin(scan_msg->angle_min + i * scan_msg->angle_increment) / occupancy_grid.info.resolution) << " rtl: " << rtl << endl;
             // cout << (scan_msg->ranges[i] * cos(scan_msg->angle_min + i * scan_msg->angle_increment) / occupancy_grid.info.resolution) << " fwd: " << fwd << endl;
-            if(fwd < occupancy_grid.info.height && abs(rtl) < occupancy_grid.info.width/2){
-                int y = -(rtl - occupancy_grid.info.width/2);
-                int x = fwd;
+            if (fwd < grid_height_m && abs(rtl) < grid_width_m/2.0) {
+                // float y = -(rtl - occupancy_grid.info.width/2);
+                // float x = fwd;
+
                 // cout << "x: " << x << endl;
                 // cout << "y: " << y << endl;
-                occupancy_grid.data[x*occupancy_grid.info.width + y] = 100;
+                occupancy_grid.data[xy_to_1d(fwd, rtl)] = 100;
+
+                // inflate the obstacles
+                std::array<int,2> xy2d = xy_to_2d(fwd, rtl);
+                inflate_obstacles(xy2d[0], xy2d[1]);
             }
         }
     }
     
-    cout << "occ grid ready" << endl;
+    // cout << "occ grid ready" << endl;
     occ_grid_pub_->publish(occupancy_grid);
     // cout << "scan callback done" << endl;
 }
+
+void RRT::inflate_obstacles(int x, int y) {
+    for (int i = -inflate; i <= inflate; i++) {
+        for (int j = -inflate; j <= inflate; j++) {
+            // check if it is a valid cell 
+            if ((x + i) >= 0 &&
+                (x + i) < occupancy_grid.info.height  &&
+                (y + j) >= 0 &&
+                (y + j) < occupancy_grid.info.width) {
+                    occupancy_grid.data[(x + i)*occupancy_grid.info.width + (y + j)] = 100;
+            }    
+        }
+    }
+};
 
 void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr pose_msg) {
     /*
@@ -228,7 +251,6 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
     // occupancy_grid.info.origin.position.x = pose_msg->pose.position.x;
     // occupancy_grid.info.origin.position.y = pose_msg->pose.position.y + occupancy_grid.info.width/2 * occupancy_grid.info.resolution;
     // cout << "origin: " << occupancy_grid.info.origin.position.x << ", " << occupancy_grid.info.origin.position.y << endl;
-
     
     tree.clear();
     
@@ -242,8 +264,10 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
     tree.push_back(root);
     RRT_Node steer_node;
     int count = 1;
-    while (!is_goal(tree.back()))  //unsure of terminating codition
+    int iter = 0;
+    while (!is_goal(tree.back()) && iter < MAX_ITER)  //unsure of terminating codition
     {
+        iter++;
         std::vector<double> sample_node = sample(); // we're sure its in free space
         RRT_Node nearest_node = nearest(tree, sample_node);
         steer_node = steer(nearest_node, sample_node);
@@ -270,7 +294,7 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
         // cout << "tree end: " << tree.back().x << ", " << tree.back().y << endl;
         // cout << "count: " << count << endl;
     }
-    cout << "Reached goal" << endl;
+    // cout << "Reached goal" << endl;
     // cout << "tree size: " << tree.size() << endl;
     rrt_path = find_path(tree, steer_node);
     visualize_tree(tree);
@@ -351,10 +375,8 @@ std::vector<double> RRT::sample() {
     the generator and the distribution is created for you (check the header file)
     */
 
-
     std::vector<double> sampled_point;
-    bool terminate_flag = false;
-    while (!terminate_flag) {
+    while (true) {
         float x_samp = x_dist(gen);
         float y_samp = y_dist(gen);
 
@@ -365,7 +387,7 @@ std::vector<double> RRT::sample() {
             // is free space
             sampled_point.push_back(x_samp);
             sampled_point.push_back(y_samp);
-            terminate_flag = true;
+            break;
         }
     }
 
@@ -397,7 +419,7 @@ void RRT::publish_drive(){
     drive_pub_->publish(drive_msg);
     rrt_cur_waypoint_vis_pub_->publish(rrt_cur_waypoint_marker);
 
-    cout << "Published drive message" << endl;
+    // cout << "Published drive message" << endl;
 
 }
 
@@ -547,9 +569,11 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
 
     std::vector<RRT_Node> found_path;
     RRT_Node curr_node = latest_added_node;
-    cout << "parent_idx: " << curr_node.parent_idx << endl;
+    // cout << "parent_idx: " << curr_node.parent_idx << endl;
     // cout << "Tree size: " << tree.size() << endl;
     // int count = 0;
+
+    int ctr = 0;
 
     path_marker.points.clear();
 
@@ -563,15 +587,17 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
     {
         found_path.push_back(curr_node);
 
-        geometry_msgs::msg::Point p;
         p.x = curr_node.x;
         p.y = curr_node.y;
         path_marker.points.push_back(p);
+        path_marker.points.push_back(p);
 
         curr_node = tree[curr_node.parent_idx];
-        cout << "parent_idx: " << curr_node.parent_idx << endl;
+        // cout << "parent_idx: " << curr_node.parent_idx << endl;
+        ctr ++; 
     }
-    cout << "found path" << endl;
+
+    // cout << "found path" << endl;
 
     p.x = curr_node.x;
     p.y = curr_node.y;
@@ -582,50 +608,12 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
     return found_path;
 }
 
-void RRT::visualize_tree(std::vector<RRT_Node> &tree){   
-
-    
-
-    node_marker.points.clear();
-    branch_marker.points.clear();
-
-    for (auto node : tree)
-    {
-        geometry_msgs::msg::Point p;
-        p.x = node.x;
-        p.y = node.y;
-        node_marker.points.push_back(p);
-        for (auto child : node.children_idx)
-        {
-            branch_marker.points.push_back(p);
-            geometry_msgs::msg::Point p_child;
-            p_child.x = tree[child].x;
-            p_child.y = tree[child].y;
-            branch_marker.points.push_back(p_child);
-        }
-
-    }
-
-    rrt_node_vis_pub_->publish(node_marker);
-    rrt_branch_vis_pub_->publish(branch_marker);
-}
-
-
 // void RRT::visualize_tree(std::vector<RRT_Node> &tree){   
 
-//     int m_id = 2000;
     
-//     visualization_msgs::msg::Marker branch_marker;
-//     branch_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
-//     branch_marker.id = 2000;
-//     branch_marker.scale.x = 0.1;
-//     branch_marker.color.a = 0.5;
-//     branch_marker.color.r = 0.0;
-//     branch_marker.color.g = 0.0;
-//     branch_marker.color.b = 1.0;
-//     branch_marker.header.frame_id = local_frame;
 
 //     node_marker.points.clear();
+//     branch_marker.points.clear();
 
 //     for (auto node : tree)
 //     {
@@ -635,29 +623,69 @@ void RRT::visualize_tree(std::vector<RRT_Node> &tree){
 //         node_marker.points.push_back(p);
 //         for (auto child : node.children_idx)
 //         {
-//             branch_marker.points.clear();
-//             branch_marker.id = m_id++;
 //             branch_marker.points.push_back(p);
 //             geometry_msgs::msg::Point p_child;
 //             p_child.x = tree[child].x;
 //             p_child.y = tree[child].y;
 //             branch_marker.points.push_back(p_child);
-//             branch_marker_arr.markers.push_back(branch_marker);
 //         }
 
 //     }
 
 //     rrt_node_vis_pub_->publish(node_marker);
-//     rrt_branch_vis_pub_->publish(branch_marker_arr);
+//     rrt_branch_vis_pub_->publish(branch_marker);
 // }
+
+
+void RRT::visualize_tree(std::vector<RRT_Node> &tree){   
+
+    int m_id = 2000;
+    
+    visualization_msgs::msg::Marker branch_marker;
+    branch_marker.type = visualization_msgs::msg::Marker::LINE_LIST;
+    branch_marker.id = 2000;
+    branch_marker.scale.x = 0.1;
+    branch_marker.color.a = 0.5;
+    branch_marker.color.r = 0.0;
+    branch_marker.color.g = 0.0;
+    branch_marker.color.b = 1.0;
+    branch_marker.header.frame_id = local_frame;
+
+    node_marker.points.clear();
+
+    for (auto node : tree)
+    {
+        geometry_msgs::msg::Point p;
+        p.x = node.x;
+        p.y = node.y;
+        node_marker.points.push_back(p);
+        for (auto child : node.children_idx)
+        {
+            branch_marker.points.clear();
+            branch_marker.id = m_id++;
+            branch_marker.points.push_back(p);
+            geometry_msgs::msg::Point p_child;
+            p_child.x = tree[child].x;
+            p_child.y = tree[child].y;
+            branch_marker.points.push_back(p_child);
+            branch_marker_arr.markers.push_back(branch_marker);
+        }
+
+    }
+
+    rrt_node_vis_pub_->publish(node_marker);
+    rrt_branch_vis_pub_->publish(branch_marker_arr);
+}
 
 
 bool RRT::is_xy_occupied(float x, float y){
     /*
     This method checks if the given x,y coordinate is occupied
     */
-    int pos =  xy2ind(x, y);
+    int pos =  xy_to_1d(x, y);
+    
     if(occupancy_grid.data[pos] == 100){
+        // cout << "x: " << x << "; y: " << y << " is occupied" << endl;
         return true;
     }
     else{
@@ -665,13 +693,46 @@ bool RRT::is_xy_occupied(float x, float y){
     }
 }
 
-int RRT::xy2ind(float x, float y){
+// int RRT::xy2ind(float x, float y){
+//     /*
+//     This method converts x,y coordinates to an index in the occupancy grid
+//     */
+//     cout << "x: " << x << "; y: " << y << endl;
+//     cout << "x " << x/occupancy_grid.info.resolution << "; y " <<  y/occupancy_grid.info.resolution << endl;
+//     int y_ind = -(int) (floor(y/occupancy_grid.info.resolution) - occupancy_grid.info.width/2);
+//     int x_ind = (int) (floor(x/occupancy_grid.info.resolution));
+//     int pos = (int) (x_ind * occupancy_grid.info.width + y_ind);
+//     cout << "x_ind: " << x_ind << "; y_ind: " << y_ind << endl;
+//     cout << "pos: " << pos << endl;
+//     return pos;
+// }
+
+std::array<int,2> RRT::xy_to_2d(float x, float y){
+    /*
+    This method converts x,y coordinates to an 2D coordinate in the occupancy grid
+    */
+    cout << "x: " << x << "; y: " << y << endl;
+    cout << "x " << x/occupancy_grid.info.resolution << "; y " <<  y/occupancy_grid.info.resolution << endl;
+
+    int x_ind, y_ind;
+    y_ind = -(int) (floor(y/occupancy_grid.info.resolution) - occupancy_grid.info.width/2);
+    y_ind--;
+
+    x_ind = (int) (floor(x/occupancy_grid.info.resolution));
+    // int pos = (int) (x_ind * occupancy_grid.info.width + y_ind);
+    cout << "x_ind: " << x_ind << "; y_ind: " << y_ind << endl;
+    
+    std::array<int,2> xy_ind = {x_ind, y_ind};
+    return xy_ind;
+}
+
+int RRT::xy_to_1d(float x, float y){
     /*
     This method converts x,y coordinates to an index in the occupancy grid
     */
-    int x_ind = (int) (floor(y) - occupancy_grid.info.width/2);
-    int y_ind = (int) (floor(x));
-    int pos = (int) (x_ind * occupancy_grid.info.width + y_ind);
+
+    std::array<int,2> xy_ind = xy_to_2d(x, y);
+    int pos = (int) (xy_ind[0] * occupancy_grid.info.width + xy_ind[1]);
     return pos;
 }
 

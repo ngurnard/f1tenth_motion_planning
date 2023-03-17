@@ -58,16 +58,16 @@ private:
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_goal_vis_pub_;          // goal 
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_node_vis_pub_;     // every node
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_path_vis_pub_;          // final path
-    // rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr rrt_branch_vis_pub_;        // all branches
-    rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_branch_vis_pub_;        // all branches
+    rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr rrt_branch_vis_pub_;        // all branches
+    // rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_branch_vis_pub_;        // all branches
     rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr rrt_cur_waypoint_vis_pub_;  // tracked waypoint
 
     // visualization markers
     visualization_msgs::msg::Marker goal_marker;
     visualization_msgs::msg::Marker node_marker;
     visualization_msgs::msg::Marker path_marker;
-    // visualization_msgs::msg::MarkerArray branch_marker_arr;
-    visualization_msgs::msg::Marker branch_marker;
+    visualization_msgs::msg::MarkerArray branch_marker_arr;
+    // visualization_msgs::msg::Marker branch_marker;
     visualization_msgs::msg::Marker rrt_cur_waypoint_marker;
 
     // random generator, use this
@@ -81,12 +81,16 @@ private:
     nav_msgs::msg::OccupancyGrid occupancy_grid;
     float max_occ_dist;
     bool is_xy_occupied(float x, float y);
-    int xy2ind(float x, float y);
+    int xy_to_1d(float x, float y);
+    std::array<int, 2> xy_to_2d(float x, float y);
+    int inflate;
+    void inflate_obstacles(int x, int y);
 
     // threshold variables
     double goal_threshold;
     double max_expansion_dist;
     double neighbor_threshold;
+    int MAX_ITER;
 
     // tree variables
     std::vector<RRT_Node> tree;
