@@ -13,7 +13,7 @@ RRT::~RRT() {
 // Constructor of the RRT class
 RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0),
             pose_topic("/pf/viz/inferred_pose"), scan_topic("/scan"), cur_wpt_topic("/waypoint"),
-            drive_topic("/drive"), occ_grid_topic("/occ_grid"), local_frame("/ego_racecar/base_link"),
+            drive_topic("/drive"), occ_grid_topic("/occ_grid"), local_frame("/ego_racecar/laser_model"),
             grid_res_m(0.1), grid_width_m(2.0), grid_height_m(3.0), inflate(2), MAX_ITER(1000)
 {
     // // ROS topics
@@ -311,48 +311,30 @@ void RRT::waypoint_callback(const interfaces_hot_wheels::msg::Waypoint::ConstSha
         void
         populated member var goal_*: the goal point
     */
-    // cout << "waypoint callback" << endl;     
-    
-    // check if the waypoint is outside the grid
 
-    // if(waypoint->x < grid_height_m && abs(waypoint->y) < grid_width_m/2.0) {
-    //     // waypoint is inside the grid
-    //     goal_x = waypoint->x;
-    //     goal_y = waypoint->y;
-    // }
-    // else 
-    // {
-    //     float waypoint_theta = atan2(waypoint->y, waypoint->x);
-    //     if (waypoint_theta > grid_theta) {
-    //         goal_x = grid_height_m;
-    //         goal_y = grid_height_m * waypoint->y / waypoint->x;
-    //     }
-
-    //     else {
-    //         goal_x = grid_width_m/2.0 * waypoint->x / waypoint->y;
-    //         goal_y = sign(waypoint->y)*grid_width_m/2.0;
-    //     }
-    // }
-
-    float pt_dist = std::sqrt(std::pow(waypoint->x, 2) + std::pow(waypoint->y, 2));
-    // use similar triangles to get the distance from the origin of the car projected on the grid
-    if (abs(waypoint->y) >  grid_width_m) {
-        // project onto the grid since outside of the grid
-        goal_x = grid_width_m * waypoint->x / std::abs(waypoint->y);
-        goal_y = grid_width_m;
-    }
-    float y_dist_temp = grid_height_m * waypoint->y / std::abs(waypoint->x);
-    // get the hypotenuse in the grid along the unit vector to the waypoint
-    float grid_dist = std::sqrt(std::pow(grid_height_m, 2) +
-                                std::pow(y_dist_temp, 2));
-    if (pt_dist > grid_dist) {
-        // project onto the grid since outside of the grid
-        goal_x = grid_height_m;
-        goal_y = y_dist_temp;
-    } else {
-        // already inside of the grid
+    if (waypoint->x < grid_height_m && abs(waypoint->y) < grid_width_m / 2.0) {
+        // waypoint is inside the grid
         goal_x = waypoint->x;
         goal_y = waypoint->y;
+    }
+    else 
+    {
+        // waypoint is outside the grid, so we project it onto the grid edge
+        // comparision of angle from the origin of the laser to the waypoint 
+        // and the angle of the grid corner to decide top or side projection
+
+        float waypoint_theta = atan2(waypoint->x, waypoint->y); // angle from the origin of the laser to the waypoint
+        if (abs(waypoint_theta) > grid_theta) {
+            // waypoint is projected onto top of occupancy grid
+            goal_x = grid_height_m;
+            goal_y = grid_height_m * waypoint->y / waypoint->x;
+        }
+
+        else {
+            // waypoint is projected onto the side of the occupancy grid
+            goal_x = (grid_width_m/2.0) * waypoint->x / waypoint->y;
+            goal_y = sign(waypoint->y) * grid_width_m / 2.0;
+        }
     }
 
     goal_marker.pose.position.x = goal_x;
