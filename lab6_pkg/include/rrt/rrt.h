@@ -34,7 +34,7 @@ typedef struct RRT_Node {
     double cost; // only used for RRT*
     int parent_idx; // index of parent node in the tree vector
     int index; // index of this node in the tree vector
-    std::vector<int> children_idx;
+    std::vector<int> children_idx = {-1}; // initialize the child to be -1 (no child)
     bool is_root = false;
 } RRT_Node;
 
@@ -131,10 +131,12 @@ private:
     bool is_goal(RRT_Node &latest_added_node);
     std::vector<RRT_Node> find_path(std::vector<RRT_Node> &tree, RRT_Node &latest_added_node);
     // RRT* methods
-    double cost(std::vector<RRT_Node> &tree, RRT_Node &node);
+    double Cost(std::vector<RRT_Node> &tree, RRT_Node &node, int neighbor_idx);
     double line_cost(RRT_Node &n1, RRT_Node &n2);
     std::vector<int> near(std::vector<RRT_Node> &tree, RRT_Node &node);
+    void dfs(std::vector<RRT_Node> &tree, RRT_Node &node);
 
 };
 
 float sign(float x);
+

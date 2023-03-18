@@ -257,7 +257,7 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
     root.x = 0;
     root.y = 0;
     root.cost = 0.0;
-    root.parent_idx = -1;
+    // root.parent_idx = -1;
     root.is_root = true;
     root.index = 0;
 
@@ -265,28 +265,65 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
     RRT_Node steer_node;
     int count = 1;
     int iter = 0;
-    while (!is_goal(tree.back()) && iter < MAX_ITER)  //unsure of terminating codition
+    while (!is_goal(tree.back())  && iter < MAX_ITER)  // TODO: unsure of terminating codition
     {
         iter++;
         std::vector<double> sample_node = sample(); // we're sure its in free space
         RRT_Node nearest_node = nearest(tree, sample_node);
         steer_node = steer(nearest_node, sample_node);
-        if(is_xy_occupied(steer_node.x, steer_node.y))
-        {
+        if(is_xy_occupied(steer_node.x, steer_node.y)) {
             // check if steer node is free
             continue;
         }
-        if(check_collision(nearest_node, steer_node))
-        {
+        if(check_collision(nearest_node, steer_node)) {
             // check for collision between nearest node and steer node (sample node, but closer)
             continue;
         }
         
-        
-        steer_node.is_root = false;
         steer_node.index = count;
+        steer_node.cost = Cost(tree, steer_node, steer_node.parent_idx);
+        std::vector<int> neighbor_idx = near(tree, steer_node);
+        // connect along the minimal cost path
+        for (int idx : neighbor_idx) {
+            // don't rewire if there is a collision
+            if (check_collision(tree[idx], steer_node)) {
+                continue;
+            }
+            // get the cost to the neighboring node
+            double neighbor_cost = Cost(tree, steer_node, idx);
+            // connect along the minimal cost path if it is better
+            if (neighbor_cost < steer_node.cost) {
+                steer_node.cost = neighbor_cost;
+                steer_node.parent_idx = idx;
+            }
+        }
+
+        // rewire the tree
+        for (int idx : neighbor_idx) {
+            // don't rewire if there is a collision
+            if (check_collision(tree[idx], steer_node)) {
+                continue;
+            }
+
+            // get the cost to the neighboring node
+            double rewire_cost = Cost(tree, steer_node, idx);
+            double neighbor_cost = tree[idx].cost;
+
+            // connect to the steer node if the new cost is better
+            if (neighbor_cost > rewire_cost) {
+                tree[idx].cost = rewire_cost; // reassign the neighbor cost
+                int prev_parent_idx = tree[idx].parent_idx;
+                tree[idx].parent_idx = steer_node.index; // reassign the neighbor parent
+                // remove the old parent's child since it now has a new parent - they got divorced
+                std::remove(tree[prev_parent_idx].children_idx.begin(), tree[prev_parent_idx].children_idx.end(), idx);
+                steer_node.children_idx.push_back(idx);
+                // reassign the children costs with a depth first search
+                dfs(tree, tree[idx]);                         
+            }    
+        }
+
         tree.push_back(steer_node);
-        nearest_node.children_idx.push_back(steer_node.index);
+        // nearest_node.children_idx.push_back(steer_node.index); // RRT only 
         count++;
 
         // cout << "sample node: " << sample_node[0] << ", " << sample_node[1] << endl;
@@ -297,8 +334,31 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
     // cout << "Reached goal" << endl;
     // cout << "tree size: " << tree.size() << endl;
     rrt_path = find_path(tree, steer_node);
-    visualize_tree(tree);
+    // visualize_tree(tree);
     publish_drive();
+}
+
+void RRT::dfs(std::vector<RRT_Node> &tree, RRT_Node &node) {
+    /*
+    Depth first search to reassign the children costs upon rewiring the tree
+    Args:
+       tree: tree object
+       node: the child itself
+    Returns:
+        void
+    */
+    // Handle case where there is no child (done)
+    if (node.children_idx.front() == -1) {
+        return;
+    }
+    
+    // Visit the root first, then the left subtree, then the right subtree.
+    // reassign the cost
+    node.cost = Cost(tree, node, node.parent_idx);
+    for (auto child : node.children_idx) {
+        dfs(tree, tree[child]); // recursively visit the children
+    }
+    return;
 }
 
 void RRT::waypoint_callback(const interfaces_hot_wheels::msg::Waypoint::ConstSharedPtr waypoint) {
@@ -565,7 +625,7 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
     path_marker.points.push_back(p);
 
 
-    while (curr_node.parent_idx != -1)
+    while (!curr_node.is_root)
     {
         found_path.push_back(curr_node);
 
@@ -675,20 +735,6 @@ bool RRT::is_xy_occupied(float x, float y){
     }
 }
 
-// int RRT::xy2ind(float x, float y){
-//     /*
-//     This method converts x,y coordinates to an index in the occupancy grid
-//     */
-//     cout << "x: " << x << "; y: " << y << endl;
-//     cout << "x " << x/occupancy_grid.info.resolution << "; y " <<  y/occupancy_grid.info.resolution << endl;
-//     int y_ind = -(int) (floor(y/occupancy_grid.info.resolution) - occupancy_grid.info.width/2);
-//     int x_ind = (int) (floor(x/occupancy_grid.info.resolution));
-//     int pos = (int) (x_ind * occupancy_grid.info.width + y_ind);
-//     cout << "x_ind: " << x_ind << "; y_ind: " << y_ind << endl;
-//     cout << "pos: " << pos << endl;
-//     return pos;
-// }
-
 std::array<int,2> RRT::xy_to_2d(float x, float y){
     /*
     This method converts x,y coordinates to an 2D coordinate in the occupancy grid
@@ -718,29 +764,32 @@ int RRT::xy_to_1d(float x, float y){
     return pos;
 }
 
+// *******************************
 // RRT* methods
+// *******************************
+double RRT::Cost(std::vector<RRT_Node> &tree, RRT_Node &node, int neighbor_idx) {
+    /*
+    This method returns the cost associated with a node
+    Args:
+       tree (std::vector<RRT_Node>): the current tree
+       node (RRT_Node): the node the cost is calculated for
+    Returns:
+       cost (double): the cost value associated with the node
+    */
 
-double RRT::cost(std::vector<RRT_Node> &tree, RRT_Node &node) {
-    // This method returns the cost associated with a node
-    // Args:
-    //    tree (std::vector<RRT_Node>): the current tree
-    //    node (RRT_Node): the node the cost is calculated for
-    // Returns:
-    //    cost (double): the cost value associated with the node
-
-    double cost = 0;
-    cost = tree[node.parent_idx].cost + line_cost(tree[node.parent_idx], node);
-
+    double cost = tree[neighbor_idx].cost + line_cost(tree[neighbor_idx], node);
     return cost;
 }
 
 double RRT::line_cost(RRT_Node &n1, RRT_Node &n2) {
-    // This method returns the cost of the straight line path between two nodes
-    // Args:
-    //    n1 (RRT_Node): the RRT_Node at one end of the path
-    //    n2 (RRT_Node): the RRT_Node at the other end of the path
-    // Returns:
-    //    cost (double): the cost value associated with the path
+    /* 
+    This method returns the cost of the straight line path between two nodes
+    Args:
+       n1 (RRT_Node): the RRT_Node at one end of the path
+       n2 (RRT_Node): the RRT_Node at the other end of the path
+    Returns:
+       cost (double): the cost value associated with the path
+    */
 
     double cost = 0;
     double x, y;
@@ -749,18 +798,19 @@ double RRT::line_cost(RRT_Node &n1, RRT_Node &n2) {
     y = n1.y - n2.y;
     cost = sqrt(pow(x,2) + pow(y,2));
     
-
     return cost;
 }
 
 std::vector<int> RRT::near(std::vector<RRT_Node> &tree, RRT_Node &node) {
-    // This method returns the set of Nodes in the neighborhood of a
-    // node.
-    // Args:
-    //   tree (std::vector<RRT_Node>): the current tree
-    //   node (RRT_Node): the node to find the neighborhood for
-    // Returns:
-    //   neighborhood (std::vector<int>): the index of the nodes in the neighborhood
+    /*
+    This method returns the set of Nodes in the neighborhood of a
+    node.
+    Args:
+      tree (std::vector<RRT_Node>): the current tree
+      node (RRT_Node): the node to find the neighborhood for
+    Returns:
+      neighborhood (std::vector<int>): the index of the nodes in the neighborhood
+    */
 
     std::vector<int> neighborhood;
     
