@@ -14,7 +14,7 @@ RRT::~RRT() {
 RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0),
             pose_topic("/pf/viz/inferred_pose"), scan_topic("/scan"), cur_wpt_topic("/waypoint"),
             drive_topic("/drive"), occ_grid_topic("/occ_grid"), local_frame("/ego_racecar/laser_model"),
-            grid_res_m(0.1), grid_width_m(2.0), grid_height_m(1.0), inflate(1), MAX_ITER(1000)
+            grid_res_m(0.05), grid_width_m(2.0), grid_height_m(2.0), inflate(1), MAX_ITER(1000)
 {
     // // ROS topics
     // pose_topic = "/pf/viz/inferred_pose";
@@ -35,7 +35,7 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     param_desc.description = "Kp value";
     this->declare_parameter("Kp", 0.3);
     param_desc.description = "Velocity";
-    this->declare_parameter("v", 0.0);
+    this->declare_parameter("v", 0.1);
 
     // // TODO: get the actual car width
     // param_desc.description = "Width in the car in meters";
@@ -81,6 +81,10 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     occupancy_grid.info.width =  width;
     occupancy_grid.info.height = height;
     grid_theta = atan2(height, width/2.0);
+    for (int it=0;it<occupancy_grid.info.width*occupancy_grid.info.height;it++)
+    {  
+        occupancy_grid.data.push_back(0);
+    }
 
     // store the top corner distances (max possible)
     max_occ_dist = sqrt(pow(grid_width_m, 2)/4.0 + pow(grid_height_m, 2));
@@ -166,10 +170,14 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
     // occupancy_grid.header.stamp = scan_msg->header.stamp;
     // occupancy_grid.header.frame_id = local_frame;
 
-    occupancy_grid.data.clear();
+    // occupancy_grid.data.clear();
+    // for (int it=0;it<occupancy_grid.info.width*occupancy_grid.info.height;it++)
+    // {  
+    //     occupancy_grid.data.push_back(0);
+    // }
     for (int it=0;it<occupancy_grid.info.width*occupancy_grid.info.height;it++)
     {  
-        occupancy_grid.data.push_back(0);
+        occupancy_grid.data[it] = 0;
     }
     // for(int it=0;it<occupancy_grid.info.width*occupancy_grid.info.height;it+=occupancy_grid.info.width)
     // {  
