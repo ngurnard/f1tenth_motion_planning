@@ -30,8 +30,8 @@ using namespace std;
 // More fields could be added to thiis struct if more info needed.
 // You can choose to use this or not
 typedef struct RRT_Node {
-    double x, y;
-    double cost; // only used for RRT*
+    float x, y;
+    float cost; // only used for RRT*
     int parent_idx; // index of parent node in the tree vector
     int index; // index of this node in the tree vector
     std::vector<int> children_idx = {-1}; // initialize the child to be -1 (no child)
@@ -87,9 +87,9 @@ private:
     void inflate_obstacles(int x, int y);
 
     // threshold variables
-    double goal_threshold;
-    double max_expansion_dist;
-    double neighbor_threshold;
+    float goal_threshold;
+    float max_expansion_dist;
+    float neighbor_threshold;
     int MAX_ITER;
 
     // tree variables
@@ -100,8 +100,8 @@ private:
     std::vector<RRT_Node> rrt_path;
 
     // waypoint vars
-    double goal_x;
-    double goal_y;
+    float goal_x;
+    float goal_y;
 
     // topic vars
     std::string pose_topic;
@@ -124,15 +124,15 @@ private:
     void visualize_tree(std::vector<RRT_Node> &tree);
 
     // RRT methods
-    std::vector<double> sample();
-    RRT_Node nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_point);
-    RRT_Node steer(RRT_Node &nearest_node, std::vector<double> &sampled_point);
+    std::vector<float> sample();
+    RRT_Node nearest(std::vector<RRT_Node> &tree, std::vector<float> &sampled_point);
+    RRT_Node steer(RRT_Node &nearest_node, std::vector<float> &sampled_point);
     bool check_collision(RRT_Node &nearest_node, RRT_Node &new_node);
     bool is_goal(RRT_Node &latest_added_node);
     std::vector<RRT_Node> find_path(std::vector<RRT_Node> &tree, RRT_Node &latest_added_node);
     // RRT* methods
-    double Cost(std::vector<RRT_Node> &tree, RRT_Node &node, int neighbor_idx);
-    double line_cost(RRT_Node &n1, RRT_Node &n2);
+    float Cost(std::vector<RRT_Node> &tree, RRT_Node &node, int neighbor_idx);
+    float line_cost(RRT_Node &n1, RRT_Node &n2);
     std::vector<int> near(std::vector<RRT_Node> &tree, RRT_Node &node);
     void dfs(std::vector<RRT_Node> &tree, RRT_Node &node);
 

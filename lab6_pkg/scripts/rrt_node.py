@@ -145,8 +145,8 @@ class RRT(Node):
 
         Args:
             latest_added_node (Node): latest added node on the tree
-            goal_x (double): x coordinate of the current goal
-            goal_y (double): y coordinate of the current goal
+            goal_x (float): x coordinate of the current goal
+            goal_y (float): y coordinate of the current goal
         Returns:
             close_enough (bool): true if node is close enoughg to the goal
         """

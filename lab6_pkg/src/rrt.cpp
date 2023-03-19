@@ -14,7 +14,7 @@ RRT::~RRT() {
 RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0),
             pose_topic("/pf/viz/inferred_pose"), scan_topic("/scan"), cur_wpt_topic("/waypoint"),
             drive_topic("/drive"), occ_grid_topic("/occ_grid"), local_frame("/ego_racecar/laser_model"),
-            grid_res_m(0.1), grid_width_m(2.0), grid_height_m(3.0), inflate(2), MAX_ITER(1000)
+            grid_res_m(0.1), grid_width_m(2.0), grid_height_m(1.0), inflate(1), MAX_ITER(1000)
 {
     // // ROS topics
     // pose_topic = "/pf/viz/inferred_pose";
@@ -31,11 +31,11 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     // ROS params
     auto param_desc = rcl_interfaces::msg::ParameterDescriptor{};
     param_desc.description = "Lookahead distance in meters";
-    this->declare_parameter("L", 1.0, param_desc);
+    this->declare_parameter("L", 0.8);
     param_desc.description = "Kp value";
     this->declare_parameter("Kp", 0.3);
     param_desc.description = "Velocity";
-    this->declare_parameter("v", 0.5);
+    this->declare_parameter("v", 0.0);
 
     // // TODO: get the actual car width
     // param_desc.description = "Width in the car in meters";
@@ -189,6 +189,11 @@ void RRT::scan_callback(const sensor_msgs::msg::LaserScan::ConstSharedPtr scan_m
     for (int i=index_neg90; i< index_pos90; i++)
     {  
         // cout << "i: " << i << endl;
+        if(isnan(scan_msg->ranges[i]) || isinf(scan_msg->ranges[i]))
+        {
+            continue;
+        }
+
         if (scan_msg->ranges[i] < max_occ_dist)
         {
             // cout << i << endl;
@@ -246,7 +251,7 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
     Returns:
        tree as std::vector
     */
-    cout << "pose callback lol" << endl;
+    // cout << "pose callback lol" << endl;
     // occupancy_grid.info.origin = pose_msg->pose;
     // occupancy_grid.info.origin.position.x = pose_msg->pose.position.x;
     // occupancy_grid.info.origin.position.y = pose_msg->pose.position.y + occupancy_grid.info.width/2 * occupancy_grid.info.resolution;
@@ -268,7 +273,7 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
     while (!is_goal(tree.back())  && iter < MAX_ITER)  // TODO: unsure of terminating codition
     {
         iter++;
-        std::vector<double> sample_node = sample(); // we're sure its in free space
+        std::vector<float> sample_node = sample(); // we're sure its in free space
         RRT_Node nearest_node = nearest(tree, sample_node);
         steer_node = steer(nearest_node, sample_node);
         if(is_xy_occupied(steer_node.x, steer_node.y)) {
@@ -290,7 +295,7 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
                 continue;
             }
             // get the cost to the neighboring node
-            double neighbor_cost = Cost(tree, steer_node, idx);
+            float neighbor_cost = Cost(tree, steer_node, idx);
             // connect along the minimal cost path if it is better
             if (neighbor_cost < steer_node.cost) {
                 steer_node.cost = neighbor_cost;
@@ -306,8 +311,8 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
             }
 
             // get the cost to the neighboring node
-            double rewire_cost = Cost(tree, steer_node, idx);
-            double neighbor_cost = tree[idx].cost;
+            float rewire_cost = Cost(tree, steer_node, idx);
+            float neighbor_cost = tree[idx].cost;
 
             // connect to the steer node if the new cost is better
             if (neighbor_cost > rewire_cost) {
@@ -315,7 +320,7 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
                 int prev_parent_idx = tree[idx].parent_idx;
                 tree[idx].parent_idx = steer_node.index; // reassign the neighbor parent
                 // remove the old parent's child since it now has a new parent - they got divorced
-                std::remove(tree[prev_parent_idx].children_idx.begin(), tree[prev_parent_idx].children_idx.end(), idx);
+                auto _ = std::remove(tree[prev_parent_idx].children_idx.begin(), tree[prev_parent_idx].children_idx.end(), idx);
                 steer_node.children_idx.push_back(idx);
                 // reassign the children costs with a depth first search
                 dfs(tree, tree[idx]);                         
@@ -382,8 +387,8 @@ void RRT::waypoint_callback(const interfaces_hot_wheels::msg::Waypoint::ConstSha
         // waypoint is outside the grid, so we project it onto the grid edge
         // comparision of angle from the origin of the laser to the waypoint 
         // and the angle of the grid corner to decide top or side projection
-
-        float waypoint_theta = atan2(waypoint->x, waypoint->y); // angle from the origin of the laser to the waypoint
+        
+        float waypoint_theta = atan2(waypoint->x, sign(waypoint->y)*(waypoint->y)); // angle from the origin of the laser to the waypoint
         if (abs(waypoint_theta) > grid_theta) {
             // waypoint is projected onto top of occupancy grid
             goal_x = grid_height_m;
@@ -392,32 +397,33 @@ void RRT::waypoint_callback(const interfaces_hot_wheels::msg::Waypoint::ConstSha
 
         else {
             // waypoint is projected onto the side of the occupancy grid
-            goal_x = (grid_width_m/2.0) * waypoint->x / waypoint->y;
+            goal_x = (grid_width_m/2.0) * waypoint->x / abs(waypoint->y);
             goal_y = sign(waypoint->y) * grid_width_m / 2.0;
         }
     }
-
+    
+    // publish the goal marker
     goal_marker.pose.position.x = goal_x;
     goal_marker.pose.position.y = goal_y;
     rrt_goal_vis_pub_->publish(goal_marker);
     
 }
 
-std::vector<double> RRT::sample() {
+std::vector<float> RRT::sample() {
     /*
     This method returns a sampled point from the free space
     You should restrict so that it only samples a small region
     of interest around the car's current position
     Args:
     Returns:
-        sampled_point (std::vector<double>): the sampled point in free space
+        sampled_point (std::vector<float>): the sampled point in free space
 
     TODO: fill in this method
     look up the documentation on how to use std::mt19937 devices with a distribution
     the generator and the distribution is created for you (check the header file)
     */
 
-    std::vector<double> sampled_point;
+    std::vector<float> sampled_point;
     while (true) {
         float x_samp = x_dist(gen);
         float y_samp = y_dist(gen);
@@ -442,19 +448,20 @@ void RRT::publish_drive(){
     Checks waypoint on RRT path just outside lookahead distance
     */
     
-    double theta; 
-    for (auto waypoint : rrt_path)
+    float theta = 0.0; 
+    vector<RRT_Node>::iterator waypoint = rrt_path.end();
+    while (waypoint != rrt_path.begin())
     {
-        double dist = sqrt(pow(waypoint.x, 2) + pow(waypoint.y,2));
+        advance(waypoint, -1);
+        float dist = sqrt(pow(waypoint->x, 2) + pow(waypoint->y,2));
         if (dist > this->get_parameter("L").get_parameter_value().get<float>())
         {
-            theta = 2 * waypoint.y/pow(dist, 2);
-            rrt_cur_waypoint_marker.pose.position.x = waypoint.x;
-            rrt_cur_waypoint_marker.pose.position.y = waypoint.y;
+            theta = 2 * waypoint->y/pow(dist, 2);
+            rrt_cur_waypoint_marker.pose.position.x = waypoint->x;
+            rrt_cur_waypoint_marker.pose.position.y = waypoint->y;
             break;
         }
     }
-    
     ackermann_msgs::msg::AckermannDriveStamped drive_msg;
     drive_msg.drive.steering_angle = this->get_parameter("Kp").get_parameter_value().get<float>() * theta;
     drive_msg.drive.speed = this->get_parameter("v").get_parameter_value().get<float>();
@@ -465,23 +472,23 @@ void RRT::publish_drive(){
 
 }
 
-RRT_Node RRT::nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_point) {
+RRT_Node RRT::nearest(std::vector<RRT_Node> &tree, std::vector<float> &sampled_point) {
     /*
     This method returns the nearest node on the tree to the sampled point
     Args:
         tree (std::vector<RRT_Node>): the current RRT tree
-        sampled_point (std::vector<double>): the sampled point in free space
+        sampled_point (std::vector<float>): the sampled point in free space
     Returns:
         nearest_node (int): index of nearest node on the tree
     */
 
     RRT_Node nearest_node = tree.front();
-    double nearest_dist = MAXFLOAT;
+    float nearest_dist = MAXFLOAT;
     for (auto node : tree)
     {
-        double x = node.x - sampled_point[0];
-        double y = node.y - sampled_point[1];
-        double dist = sqrt(pow(x,2) - pow(y,2));
+        float x = node.x - sampled_point[0];
+        float y = node.y - sampled_point[1];
+        float dist = sqrt(pow(x,2) - pow(y,2));
         if(dist < nearest_dist)
         {
             nearest_node = node;
@@ -492,7 +499,7 @@ RRT_Node RRT::nearest(std::vector<RRT_Node> &tree, std::vector<double> &sampled_
     return nearest_node;
 }
 
-RRT_Node RRT::steer(RRT_Node &nearest_node, std::vector<double> &sampled_point) {
+RRT_Node RRT::steer(RRT_Node &nearest_node, std::vector<float> &sampled_point) {
     /*
     The function steer:(x,y)->z returns a point such that z is “closer”
     to y than x is. The point z returned by the function steer will be
@@ -503,12 +510,12 @@ RRT_Node RRT::steer(RRT_Node &nearest_node, std::vector<double> &sampled_point) 
 
     Args:
        nearest_node (RRT_Node): nearest node on the tree to the sampled point
-       sampled_point (std::vector<double>): the sampled point in free space
+       sampled_point (std::vector<float>): the sampled point in free space
     Returns:
        new_node (RRT_Node): new node created from steering
     */
     RRT_Node new_node;
-    double x, y, dist;
+    float x, y, dist;
 
     x = sampled_point[0] - nearest_node.x;
     y = sampled_point[1] - nearest_node.y;
@@ -516,7 +523,7 @@ RRT_Node RRT::steer(RRT_Node &nearest_node, std::vector<double> &sampled_point) 
 
     if (dist > max_expansion_dist)
     {
-        double theta = atan2(y,x);
+        float theta = atan2(y,x);
         new_node.x = nearest_node.x + max_expansion_dist * cos(theta);
         new_node.y = nearest_node.y + max_expansion_dist * sin(theta);
     }
@@ -576,14 +583,14 @@ bool RRT::is_goal(RRT_Node &latest_added_node) {
     the search and find a path
     Args:
       latest_added_node (RRT_Node): latest addition to the tree
-      goal_x (double): x coordinate of the current goal
-      goal_y (double): y coordinate of the current goal
+      goal_x (float): x coordinate of the current goal
+      goal_y (float): y coordinate of the current goal
     Returns:
       close_enough (bool): true if node close enough to the goal
     */
 
     bool close_enough = false;
-    double x, y, dist;
+    float x, y, dist;
 
     x = latest_added_node.x - goal_x;
     y = latest_added_node.y - goal_y;
@@ -739,8 +746,8 @@ std::array<int,2> RRT::xy_to_2d(float x, float y){
     /*
     This method converts x,y coordinates to an 2D coordinate in the occupancy grid
     */
-    cout << "x: " << x << "; y: " << y << endl;
-    cout << "x " << x/occupancy_grid.info.resolution << "; y " <<  y/occupancy_grid.info.resolution << endl;
+    // cout << "x: " << x << "; y: " << y << endl;
+    // cout << "x " << x/occupancy_grid.info.resolution << "; y " <<  y/occupancy_grid.info.resolution << endl;
 
     int x_ind, y_ind;
     y_ind = -(int) (floor(y/occupancy_grid.info.resolution) - occupancy_grid.info.width/2);
@@ -748,7 +755,7 @@ std::array<int,2> RRT::xy_to_2d(float x, float y){
 
     x_ind = (int) (floor(x/occupancy_grid.info.resolution));
     // int pos = (int) (x_ind * occupancy_grid.info.width + y_ind);
-    cout << "x_ind: " << x_ind << "; y_ind: " << y_ind << endl;
+    // cout << "x_ind: " << x_ind << "; y_ind: " << y_ind << endl;
     
     std::array<int,2> xy_ind = {x_ind, y_ind};
     return xy_ind;
@@ -767,32 +774,32 @@ int RRT::xy_to_1d(float x, float y){
 // *******************************
 // RRT* methods
 // *******************************
-double RRT::Cost(std::vector<RRT_Node> &tree, RRT_Node &node, int neighbor_idx) {
+float RRT::Cost(std::vector<RRT_Node> &tree, RRT_Node &node, int neighbor_idx) {
     /*
     This method returns the cost associated with a node
     Args:
        tree (std::vector<RRT_Node>): the current tree
        node (RRT_Node): the node the cost is calculated for
     Returns:
-       cost (double): the cost value associated with the node
+       cost (float): the cost value associated with the node
     */
 
-    double cost = tree[neighbor_idx].cost + line_cost(tree[neighbor_idx], node);
+    float cost = tree[neighbor_idx].cost + line_cost(tree[neighbor_idx], node);
     return cost;
 }
 
-double RRT::line_cost(RRT_Node &n1, RRT_Node &n2) {
+float RRT::line_cost(RRT_Node &n1, RRT_Node &n2) {
     /* 
     This method returns the cost of the straight line path between two nodes
     Args:
        n1 (RRT_Node): the RRT_Node at one end of the path
        n2 (RRT_Node): the RRT_Node at the other end of the path
     Returns:
-       cost (double): the cost value associated with the path
+       cost (float): the cost value associated with the path
     */
 
-    double cost = 0;
-    double x, y;
+    float cost = 0;
+    float x, y;
 
     x = n1.x - n2.x;
     y = n1.y - n2.y;
