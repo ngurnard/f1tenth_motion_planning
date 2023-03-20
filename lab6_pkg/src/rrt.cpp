@@ -14,7 +14,7 @@ RRT::~RRT() {
 RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0),
             pose_topic("/pf/viz/inferred_pose"), scan_topic("/scan"), cur_wpt_topic("/waypoint"),
             drive_topic("/drive"), occ_grid_topic("/occ_grid"), local_frame("/ego_racecar/laser_model"),
-            grid_res_m(0.05), grid_width_m(2.0), grid_height_m(2.0), inflate(1), MAX_ITER(1000)
+            grid_res_m(0.05), grid_width_m(2.0), grid_height_m(3.0), inflate(1), MAX_ITER(1000)
 {
     // // ROS topics
     // pose_topic = "/pf/viz/inferred_pose";
@@ -31,11 +31,11 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     // ROS params
     auto param_desc = rcl_interfaces::msg::ParameterDescriptor{};
     param_desc.description = "Lookahead distance in meters";
-    this->declare_parameter("L", 0.8);
+    this->declare_parameter("L", 1.0);
     param_desc.description = "Kp value";
-    this->declare_parameter("Kp", 0.3);
+    this->declare_parameter("Kp", 0.4);
     param_desc.description = "Velocity";
-    this->declare_parameter("v", 0.1);
+    this->declare_parameter("v", 1.0);
 
     // // TODO: get the actual car width
     // param_desc.description = "Width in the car in meters";
@@ -561,7 +561,7 @@ bool RRT::check_collision(RRT_Node &nearest_node, RRT_Node &new_node) {
     // use AABB (axis-aligned bounding box)
     // refer here: https://www.realtimerendering.com/intersections.html
 
-    cout << "Checking collision" << endl;
+    // cout << "Checking collision" << endl;
 
     float dist = sqrt(pow(nearest_node.x - new_node.x, 2) + pow(nearest_node.y - new_node.y, 2));
     float unit_vec_x = (new_node.x - nearest_node.x) / dist;
@@ -741,7 +741,7 @@ bool RRT::is_xy_occupied(float x, float y){
     /*
     This method checks if the given x,y coordinate is occupied
     */
-   cout << "Checking if x: " << x << "; y: " << y << " is occupied" << endl;
+//    cout << "Checking if x: " << x << "; y: " << y << " is occupied" << endl;
     int pos =  xy_to_1d(x, y);
     
     if(occupancy_grid.data[pos] == 100){
@@ -760,7 +760,7 @@ std::array<int,2> RRT::xy_to_2d(float x, float y){
     // cout << "x: " << x << "; y: " << y << endl;
     // cout << "x " << x/occupancy_grid.info.resolution << "; y " <<  y/occupancy_grid.info.resolution << endl;
 
-    cout << "xy_to_2d" << endl;
+    // cout << "xy_to_2d" << endl;
     int x_ind, y_ind;
     y_ind = -(int) (floor(y/occupancy_grid.info.resolution) - occupancy_grid.info.width/2);
     y_ind--;
@@ -777,7 +777,7 @@ int RRT::xy_to_1d(float x, float y){
     /*
     This method converts x,y coordinates to an index in the occupancy grid
     */
-    cout << "xy_to_1d" << endl;
+    // cout << "xy_to_1d" << endl;
     std::array<int,2> xy_ind = xy_to_2d(x, y);
     int pos = (int) (xy_ind[0] * occupancy_grid.info.width + xy_ind[1]);
     return pos;
@@ -795,7 +795,7 @@ float RRT::Cost(std::vector<RRT_Node> &tree, RRT_Node &node, int neighbor_idx) {
     Returns:
        cost (float): the cost value associated with the node
     */
-    cout << "RRT* Cost" << endl;
+    // cout << "RRT* Cost" << endl;
     float cost = tree[neighbor_idx].cost + line_cost(tree[neighbor_idx], node);
     return cost;
 }
@@ -810,7 +810,7 @@ float RRT::line_cost(RRT_Node &n1, RRT_Node &n2) {
        cost (float): the cost value associated with the path
     */
 
-    cout << "RRT* line_cost" << endl;
+    // cout << "RRT* line_cost" << endl;
     float cost = 0;
     float x, y;
 
@@ -832,7 +832,7 @@ std::vector<int> RRT::near(std::vector<RRT_Node> &tree, RRT_Node &node) {
       neighborhood (std::vector<int>): the index of the nodes in the neighborhood
     */
 
-    cout << "RRT* near" << endl;
+    // cout << "RRT* near" << endl;
     std::vector<int> neighborhood;
     
     for (auto curr_node : tree)
