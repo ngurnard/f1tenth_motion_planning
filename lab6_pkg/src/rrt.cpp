@@ -13,8 +13,9 @@ RRT::~RRT() {
 // Constructor of the RRT class
 RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0),
             pose_topic("/pf/viz/inferred_pose"), scan_topic("/scan"), cur_wpt_topic("/waypoint"),
-            drive_topic("/drive"), occ_grid_topic("/occ_grid"), local_frame("/ego_racecar/laser_model"),
-            grid_res_m(0.05), grid_width_m(2.0), grid_height_m(2.0), inflate(1), MAX_ITER(1000)
+            drive_topic("/drive"), occ_grid_topic("/occ_grid"), local_frame("ego_racecar/laser_model"),
+            grid_res_m(0.05), grid_width_m(2.0), grid_height_m(2.0), inflate(1), MAX_ITER(1000),
+            global_frame("map"), rrt_flag(true)
 {
     // // ROS topics
     // pose_topic = "/pf/viz/inferred_pose";
@@ -74,6 +75,15 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     occupancy_grid.info.origin.orientation.y = 0.0;
     occupancy_grid.info.origin.orientation.z = -sqrt(2.0)/2.0;
     occupancy_grid.info.origin.orientation.w = sqrt(2.0)/2.0;
+
+    rrt_waypoint.header.frame_id = global_frame;
+    rrt_waypoint.pose.position.x = -3.0;
+    rrt_waypoint.pose.position.y = 0.0;
+    rrt_waypoint.pose.position.z = 0.0;
+    rrt_waypoint.pose.orientation.x = 0.0;
+    rrt_waypoint.pose.orientation.y = 0.0;
+    rrt_waypoint.pose.orientation.z = 0.0;
+    rrt_waypoint.pose.orientation.w = 1.0;
 
     occupancy_grid.info.resolution = grid_res_m;
     float width = (grid_width_m / occupancy_grid.info.resolution);
@@ -276,77 +286,94 @@ void RRT::pose_callback(const geometry_msgs::msg::PoseStamped::ConstSharedPtr po
 
     tree.push_back(root);
     RRT_Node steer_node;
-    int count = 1;
-    int iter = 0;
-    while (!is_goal(tree.back())  && iter < MAX_ITER)  // TODO: unsure of terminating codition
+    
+    cout << "Pose: " << pose_msg->pose.position.x << ", " << pose_msg->pose.position.y << endl;
+    cout << "RRT Waypoint: " << rrt_waypoint.pose.position.x << ", " << rrt_waypoint.pose.position.y << endl;
+    if (sqrt(pow(pose_msg->pose.position.x - rrt_waypoint.pose.position.x, 2) +
+             pow(pose_msg->pose.position.y - rrt_waypoint.pose.position.y, 2)) < neighbor_threshold) 
     {
-        iter++;
-        std::vector<float> sample_node = sample(); // we're sure its in free space
-        RRT_Node nearest_node = nearest(tree, sample_node);
-        steer_node = steer(nearest_node, sample_node);
-        if(is_xy_occupied(steer_node.x, steer_node.y)) {
-            // check if steer node is free
-            continue;
-        }
-        if(check_collision(nearest_node, steer_node)) {
-            // check for collision between nearest node and steer node (sample node, but closer)
-            continue;
-        }
-        
-        steer_node.index = count;
-        steer_node.cost = Cost(tree, steer_node, steer_node.parent_idx);
-        std::vector<int> neighbor_idx = near(tree, steer_node);
-        // connect along the minimal cost path
-        for (int idx : neighbor_idx) {
-            // don't rewire if there is a collision
-            if (check_collision(tree[idx], steer_node)) {
-                continue;
-            }
-            // get the cost to the neighboring node
-            float neighbor_cost = Cost(tree, steer_node, idx);
-            // connect along the minimal cost path if it is better
-            if (neighbor_cost < steer_node.cost) {
-                steer_node.cost = neighbor_cost;
-                steer_node.parent_idx = idx;
-            }
-        }
-
-        // rewire the tree
-        for (int idx : neighbor_idx) {
-            // don't rewire if there is a collision
-            if (check_collision(tree[idx], steer_node)) {
-                continue;
-            }
-
-            // get the cost to the neighboring node
-            float rewire_cost = Cost(tree, steer_node, idx);
-            float neighbor_cost = tree[idx].cost;
-
-            // connect to the steer node if the new cost is better
-            if (neighbor_cost > rewire_cost) {
-                tree[idx].cost = rewire_cost; // reassign the neighbor cost
-                int prev_parent_idx = tree[idx].parent_idx;
-                tree[idx].parent_idx = steer_node.index; // reassign the neighbor parent
-                // remove the old parent's child since it now has a new parent - they got divorced
-                auto _ = std::remove(tree[prev_parent_idx].children_idx.begin(), tree[prev_parent_idx].children_idx.end(), idx);
-                steer_node.children_idx.push_back(idx);
-                // reassign the children costs with a depth first search
-                dfs(tree, tree[idx]);                         
-            }    
-        }
-
-        tree.push_back(steer_node);
-        // nearest_node.children_idx.push_back(steer_node.index); // RRT only 
-        count++;
-
-        // cout << "sample node: " << sample_node[0] << ", " << sample_node[1] << endl;
-        // cout << "steer node: " << steer_node.x << ", " << steer_node.y << endl;
-        // cout << "tree end: " << tree.back().x << ", " << tree.back().y << endl;
-        // cout << "count: " << count << endl;
+        rrt_flag = true;
     }
-    // cout << "Reached goal" << endl;
-    // cout << "tree size: " << tree.size() << endl;
-    rrt_path = find_path(tree, steer_node);
+    else
+    {
+        rrt_flag = false;
+    }
+
+    if (rrt_flag) {
+        int count = 1;
+        int iter = 0;
+    
+        while (!is_goal(tree.back())  && iter < MAX_ITER)  // TODO: unsure of terminating codition
+        {
+            iter++;
+            std::vector<float> sample_node = sample(); // we're sure its in free space
+            RRT_Node nearest_node = nearest(tree, sample_node);
+            steer_node = steer(nearest_node, sample_node);
+            if(is_xy_occupied(steer_node.x, steer_node.y)) {
+                // check if steer node is free
+                continue;
+            }
+            if(check_collision(nearest_node, steer_node)) {
+                // check for collision between nearest node and steer node (sample node, but closer)
+                continue;
+            }
+            
+            steer_node.index = count;
+            steer_node.cost = Cost(tree, steer_node, steer_node.parent_idx);
+            std::vector<int> neighbor_idx = near(tree, steer_node);
+            // connect along the minimal cost path
+            for (int idx : neighbor_idx) {
+                // don't rewire if there is a collision
+                if (check_collision(tree[idx], steer_node)) {
+                    continue;
+                }
+                // get the cost to the neighboring node
+                float neighbor_cost = Cost(tree, steer_node, idx);
+                // connect along the minimal cost path if it is better
+                if (neighbor_cost < steer_node.cost) {
+                    steer_node.cost = neighbor_cost;
+                    steer_node.parent_idx = idx;
+                }
+            }
+
+            // rewire the tree
+            for (int idx : neighbor_idx) {
+                // don't rewire if there is a collision
+                if (check_collision(tree[idx], steer_node)) {
+                    continue;
+                }
+
+                // get the cost to the neighboring node
+                float rewire_cost = Cost(tree, steer_node, idx);
+                float neighbor_cost = tree[idx].cost;
+
+                // connect to the steer node if the new cost is better
+                if (neighbor_cost > rewire_cost) {
+                    tree[idx].cost = rewire_cost; // reassign the neighbor cost
+                    int prev_parent_idx = tree[idx].parent_idx;
+                    tree[idx].parent_idx = steer_node.index; // reassign the neighbor parent
+                    // remove the old parent's child since it now has a new parent - they got divorced
+                    auto _ = std::remove(tree[prev_parent_idx].children_idx.begin(), tree[prev_parent_idx].children_idx.end(), idx);
+                    steer_node.children_idx.push_back(idx);
+                    // reassign the children costs with a depth first search
+                    dfs(tree, tree[idx]);                         
+                }    
+            }
+
+            tree.push_back(steer_node);
+            // nearest_node.children_idx.push_back(steer_node.index); // RRT only 
+            count++;
+
+            // cout << "sample node: " << sample_node[0] << ", " << sample_node[1] << endl;
+            // cout << "steer node: " << steer_node.x << ", " << steer_node.y << endl;
+            // cout << "tree end: " << tree.back().x << ", " << tree.back().y << endl;
+            // cout << "count: " << count << endl;
+        }
+        // cout << "Reached goal" << endl;
+        // cout << "tree size: " << tree.size() << endl;
+        rrt_path = find_path(tree, steer_node);
+        find_rrt_waypoint(tree);
+    }
     // visualize_tree(tree);
     publish_drive();
 }
@@ -450,31 +477,105 @@ std::vector<float> RRT::sample() {
     return sampled_point;
 }
 
-void RRT::publish_drive(){    
+void RRT::find_rrt_waypoint(std::vector<RRT_Node> &tree)
+{
     /*
-    This method publishes the drive message to the drive topic
-    Checks waypoint on RRT path just outside lookahead distance
+    This method finds the waypoint on the RRT path just outside the lookahead distance
+    Args:
+        tree (std::vector<RRT_Node>): the tree object
+        latest_added_node (RRT_Node): the latest added node to the tree
+    Returns:
+        void
+        populates member var rrt_waypoint: the waypoint
+        publishes member var rrt_cur_waypoint_marker: the waypoint marker
     */
-    
-    float theta = 0.0; 
+
     vector<RRT_Node>::iterator waypoint = rrt_path.end();
+    geometry_msgs::msg::PoseStamped rrt_waypoint_local;
+    rrt_waypoint_local.header.frame_id = local_frame;
+    rrt_waypoint_local.pose.position.z = 0.0;
+    rrt_waypoint_local.pose.orientation.x = 0.0;
+    rrt_waypoint_local.pose.orientation.y = 0.0;
+    rrt_waypoint_local.pose.orientation.z = 0.0;
+    rrt_waypoint_local.pose.orientation.w = 1.0;
+    cout << "laser_to_map" << endl;
+
     while (waypoint != rrt_path.begin())
     {
         advance(waypoint, -1);
         float dist = sqrt(pow(waypoint->x, 2) + pow(waypoint->y,2));
         if (dist > this->get_parameter("L").get_parameter_value().get<float>())
         {
-            theta = 2 * waypoint->y/pow(dist, 2);
             rrt_cur_waypoint_marker.pose.position.x = waypoint->x;
             rrt_cur_waypoint_marker.pose.position.y = waypoint->y;
+            rrt_waypoint_local.pose.position.x = waypoint->x;
+            rrt_waypoint_local.pose.position.y = waypoint->y;
+            try {
+                laser_to_map = tf_buffer_->lookupTransform(
+                global_frame, local_frame, // world waypoints in terms of cars frame. From world to car = ^{car}T_{world}
+                tf2::TimePointZero); // get the latest available transform
+                cout << "LOL" << endl;
+            } catch (const tf2::TransformException & ex) {
+                RCLCPP_INFO(
+                this->get_logger(), "Could not transform %s to %s: %s",
+                local_frame.c_str(), global_frame.c_str(), ex.what());
+                return;
+            }
+            tf2::doTransform(rrt_waypoint_local, rrt_waypoint, laser_to_map);
             break;
         }
     }
+    rrt_cur_waypoint_vis_pub_->publish(rrt_cur_waypoint_marker);
+}
+
+void RRT::publish_drive(){    
+    /*
+    This method publishes the drive message to the /drive topic
+    Checks waypoint on RRT path just outside lookahead distance
+    */
+    
+    geometry_msgs::msg::PoseStamped rrt_waypoint_local;
+    rrt_waypoint_local.header.frame_id = local_frame;
+    rrt_waypoint_local.pose.position.x = rrt_waypoint.pose.position.x;
+    rrt_waypoint_local.pose.position.y = rrt_waypoint.pose.position.y;
+    rrt_waypoint_local.pose.position.z = 0.0;
+    rrt_waypoint_local.pose.orientation.x = 0.0;
+    rrt_waypoint_local.pose.orientation.y = 0.0;
+    rrt_waypoint_local.pose.orientation.z = 0.0;
+    rrt_waypoint_local.pose.orientation.w = 1.0;
+    cout << "map_to_laser" << endl;
+
+    try {
+        map_to_laser = tf_buffer_->lookupTransform(
+        local_frame, global_frame, // world waypoints in terms of cars frame. From world to car = ^{car}T_{world}
+        tf2::TimePointZero); // get the latest available transform
+    } catch (const tf2::TransformException & ex) {
+        RCLCPP_INFO(
+        this->get_logger(), "Could not transform %s to %s: %s",
+        global_frame.c_str(), local_frame.c_str(), ex.what());
+        return;
+    }
+
+    tf2::doTransform(rrt_waypoint, rrt_waypoint_local, map_to_laser);
+    float theta = 0.0; 
+    // vector<RRT_Node>::iterator waypoint = rrt_path.end();
+    // while (waypoint != rrt_path.begin())
+    // {
+    //     advance(waypoint, -1);
+    float dist = sqrt(pow(rrt_waypoint_local.pose.position.x, 2) + pow(rrt_waypoint_local.pose.position.y, 2));
+        // if (dist > this->get_parameter("L").get_parameter_value().get<float>())
+        // {
+    theta = 2 * rrt_waypoint_local.pose.position.y / pow(dist, 2);
+    //         rrt_cur_waypoint_marker.pose.position.x = waypoint->x;
+    //         rrt_cur_waypoint_marker.pose.position.y = waypoint->y;
+    //         break;
+    //     }
+    // }
     ackermann_msgs::msg::AckermannDriveStamped drive_msg;
     drive_msg.drive.steering_angle = this->get_parameter("Kp").get_parameter_value().get<float>() * theta;
     drive_msg.drive.speed = this->get_parameter("v").get_parameter_value().get<float>();
     drive_pub_->publish(drive_msg);
-    rrt_cur_waypoint_vis_pub_->publish(rrt_cur_waypoint_marker);
+    // rrt_cur_waypoint_vis_pub_->publish(rrt_cur_waypoint_marker);
 
     // cout << "Published drive message" << endl;
 
@@ -561,7 +662,7 @@ bool RRT::check_collision(RRT_Node &nearest_node, RRT_Node &new_node) {
     // use AABB (axis-aligned bounding box)
     // refer here: https://www.realtimerendering.com/intersections.html
 
-    cout << "Checking collision" << endl;
+    // cout << "Checking collision" << endl;
 
     float dist = sqrt(pow(nearest_node.x - new_node.x, 2) + pow(nearest_node.y - new_node.y, 2));
     float unit_vec_x = (new_node.x - nearest_node.x) / dist;
@@ -630,7 +731,6 @@ std::vector<RRT_Node> RRT::find_path(std::vector<RRT_Node> &tree, RRT_Node &late
     RRT_Node curr_node = latest_added_node;
     // cout << "parent_idx: " << curr_node.parent_idx << endl;
     // cout << "Tree size: " << tree.size() << endl;
-    // int count = 0;
 
     int ctr = 0;
 
@@ -741,7 +841,7 @@ bool RRT::is_xy_occupied(float x, float y){
     /*
     This method checks if the given x,y coordinate is occupied
     */
-   cout << "Checking if x: " << x << "; y: " << y << " is occupied" << endl;
+//    cout << "Checking if x: " << x << "; y: " << y << " is occupied" << endl;
     int pos =  xy_to_1d(x, y);
     
     if(occupancy_grid.data[pos] == 100){
@@ -760,7 +860,7 @@ std::array<int,2> RRT::xy_to_2d(float x, float y){
     // cout << "x: " << x << "; y: " << y << endl;
     // cout << "x " << x/occupancy_grid.info.resolution << "; y " <<  y/occupancy_grid.info.resolution << endl;
 
-    cout << "xy_to_2d" << endl;
+    // cout << "xy_to_2d" << endl;
     int x_ind, y_ind;
     y_ind = -(int) (floor(y/occupancy_grid.info.resolution) - occupancy_grid.info.width/2);
     y_ind--;
@@ -777,7 +877,7 @@ int RRT::xy_to_1d(float x, float y){
     /*
     This method converts x,y coordinates to an index in the occupancy grid
     */
-    cout << "xy_to_1d" << endl;
+    // cout << "xy_to_1d" << endl;
     std::array<int,2> xy_ind = xy_to_2d(x, y);
     int pos = (int) (xy_ind[0] * occupancy_grid.info.width + xy_ind[1]);
     return pos;
@@ -795,7 +895,8 @@ float RRT::Cost(std::vector<RRT_Node> &tree, RRT_Node &node, int neighbor_idx) {
     Returns:
        cost (float): the cost value associated with the node
     */
-    cout << "RRT* Cost" << endl;
+    
+    // cout << "RRT* Cost" << endl;
     float cost = tree[neighbor_idx].cost + line_cost(tree[neighbor_idx], node);
     return cost;
 }
@@ -810,7 +911,7 @@ float RRT::line_cost(RRT_Node &n1, RRT_Node &n2) {
        cost (float): the cost value associated with the path
     */
 
-    cout << "RRT* line_cost" << endl;
+    // cout << "RRT* line_cost" << endl;
     float cost = 0;
     float x, y;
 
@@ -832,7 +933,7 @@ std::vector<int> RRT::near(std::vector<RRT_Node> &tree, RRT_Node &node) {
       neighborhood (std::vector<int>): the index of the nodes in the neighborhood
     */
 
-    cout << "RRT* near" << endl;
+    // cout << "RRT* near" << endl;
     std::vector<int> neighborhood;
     
     for (auto curr_node : tree)
