@@ -10,6 +10,9 @@ def generate_launch_description():
             package='pure_pursuit',
             executable='waypoint_node',
             name='waypoint_node',
+            parameters=[
+            {"local_frame": "laser"}
+            ]
         ),
         IncludeLaunchDescription
         (

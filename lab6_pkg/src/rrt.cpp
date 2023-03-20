@@ -14,7 +14,7 @@ RRT::~RRT() {
 RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0),
             pose_topic("/pf/viz/inferred_pose"), scan_topic("/scan"), cur_wpt_topic("/waypoint"),
             drive_topic("/drive"), occ_grid_topic("/occ_grid"), local_frame("/ego_racecar/laser_model"),
-            grid_res_m(0.05), grid_width_m(2.0), grid_height_m(3.0), inflate(1), MAX_ITER(1000)
+            grid_res_m(0.05), grid_width_m(2.0), grid_height_m(3.0), inflate(4), MAX_ITER(1000)
 {
     // // ROS topics
     // pose_topic = "/pf/viz/inferred_pose";
@@ -31,11 +31,14 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
     // ROS params
     auto param_desc = rcl_interfaces::msg::ParameterDescriptor{};
     param_desc.description = "Lookahead distance in meters";
-    this->declare_parameter("L", 1.0);
+    this->declare_parameter("L", 0.8);
     param_desc.description = "Kp value";
-    this->declare_parameter("Kp", 0.4);
+    this->declare_parameter("Kp", 0.6);
     param_desc.description = "Velocity";
     this->declare_parameter("v", 1.0);
+    this->declare_parameter("local_frame", "laser");
+
+    get_parameter("local_frame", local_frame);
 
     // // TODO: get the actual car width
     // param_desc.description = "Width in the car in meters";
@@ -43,8 +46,8 @@ RRT::RRT(): rclcpp::Node("rrt_node"), gen((std::random_device())()), goal_y(0.0)
 
     this->goal_x = grid_height_m;
     goal_threshold = 0.1;//grid_res_m / 2.0;
-    max_expansion_dist = 0.1;//grid_res_m / 10.0;
-    neighbor_threshold = 0.05;
+    max_expansion_dist = 0.15;//grid_res_m / 10.0;
+    neighbor_threshold = 0.1;
 
     // ROS subscribers
     // TODO: create subscribers as you need
