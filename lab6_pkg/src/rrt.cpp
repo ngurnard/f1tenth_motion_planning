@@ -561,6 +561,8 @@ bool RRT::check_collision(RRT_Node &nearest_node, RRT_Node &new_node) {
     // use AABB (axis-aligned bounding box)
     // refer here: https://www.realtimerendering.com/intersections.html
 
+    cout << "Checking collision" << endl;
+
     float dist = sqrt(pow(nearest_node.x - new_node.x, 2) + pow(nearest_node.y - new_node.y, 2));
     float unit_vec_x = (new_node.x - nearest_node.x) / dist;
     float unit_vec_y = (new_node.y - nearest_node.y) / dist;
@@ -739,6 +741,7 @@ bool RRT::is_xy_occupied(float x, float y){
     /*
     This method checks if the given x,y coordinate is occupied
     */
+   cout << "Checking if x: " << x << "; y: " << y << " is occupied" << endl;
     int pos =  xy_to_1d(x, y);
     
     if(occupancy_grid.data[pos] == 100){
@@ -757,6 +760,7 @@ std::array<int,2> RRT::xy_to_2d(float x, float y){
     // cout << "x: " << x << "; y: " << y << endl;
     // cout << "x " << x/occupancy_grid.info.resolution << "; y " <<  y/occupancy_grid.info.resolution << endl;
 
+    cout << "xy_to_2d" << endl;
     int x_ind, y_ind;
     y_ind = -(int) (floor(y/occupancy_grid.info.resolution) - occupancy_grid.info.width/2);
     y_ind--;
@@ -773,7 +777,7 @@ int RRT::xy_to_1d(float x, float y){
     /*
     This method converts x,y coordinates to an index in the occupancy grid
     */
-
+    cout << "xy_to_1d" << endl;
     std::array<int,2> xy_ind = xy_to_2d(x, y);
     int pos = (int) (xy_ind[0] * occupancy_grid.info.width + xy_ind[1]);
     return pos;
@@ -791,7 +795,7 @@ float RRT::Cost(std::vector<RRT_Node> &tree, RRT_Node &node, int neighbor_idx) {
     Returns:
        cost (float): the cost value associated with the node
     */
-
+    cout << "RRT* Cost" << endl;
     float cost = tree[neighbor_idx].cost + line_cost(tree[neighbor_idx], node);
     return cost;
 }
@@ -806,6 +810,7 @@ float RRT::line_cost(RRT_Node &n1, RRT_Node &n2) {
        cost (float): the cost value associated with the path
     */
 
+    cout << "RRT* line_cost" << endl;
     float cost = 0;
     float x, y;
 
@@ -827,6 +832,7 @@ std::vector<int> RRT::near(std::vector<RRT_Node> &tree, RRT_Node &node) {
       neighborhood (std::vector<int>): the index of the nodes in the neighborhood
     */
 
+    cout << "RRT* near" << endl;
     std::vector<int> neighborhood;
     
     for (auto curr_node : tree)
