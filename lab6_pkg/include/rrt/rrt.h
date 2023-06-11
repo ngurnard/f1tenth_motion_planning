@@ -21,6 +21,11 @@
 #include "nav_msgs/msg/occupancy_grid.hpp"
 #include <tf2_ros/transform_broadcaster.h>
 #include "interfaces_hot_wheels/msg/waypoint.hpp"
+#include <tf2_ros/transform_listener.h>
+#include <tf2_ros/buffer.h>
+#include <tf2/LinearMath/Matrix3x3.h>
+#include <tf2/LinearMath/Quaternion.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 
 /// CHECK: include needed ROS msg type headers and libraries
 
@@ -102,6 +107,8 @@ private:
     // waypoint vars
     float goal_x;
     float goal_y;
+    bool rrt_flag;
+    geometry_msgs::msg::PoseStamped rrt_waypoint;
 
     // topic vars
     std::string pose_topic;
@@ -112,6 +119,13 @@ private:
     
     // frame vars
     std::string local_frame;
+    std::string global_frame;
+    geometry_msgs::msg::TransformStamped laser_to_map;
+    geometry_msgs::msg::TransformStamped map_to_laser;
+
+    // transform listener
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_{nullptr};
+    std::unique_ptr<tf2_ros::Buffer> tf_buffer_;
 
     // callbacks
     // where rrt actually happens
@@ -135,6 +149,7 @@ private:
     float line_cost(RRT_Node &n1, RRT_Node &n2);
     std::vector<int> near(std::vector<RRT_Node> &tree, RRT_Node &node);
     void dfs(std::vector<RRT_Node> &tree, RRT_Node &node);
+    void find_rrt_waypoint(std::vector<RRT_Node> &tree);
 
 };
 

@@ -7,7 +7,7 @@ if(NOT CMAKE_CXX_STANDARD)
 endif()
 
 if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  add_compile_options(-Wall -Wextra -Wpedantic)
+  add_compile_options(-Wall -Wextra -Wpedantic -g)
 endif()
 
 # Find dependencies
@@ -24,6 +24,7 @@ foreach(PACKAGE
   visualization_msgs
   Eigen3
   tf2_ros
+  tf2_geometry_msgs
   interfaces_hot_wheels
   pure_pursuit
   )
@@ -42,7 +43,7 @@ include_directories(
 add_executable(rrt_node src/rrt_node.cpp src/rrt.cpp)
 
 ament_target_dependencies(rrt_node 
-  rclcpp geometry_msgs ackermann_msgs nav_msgs sensor_msgs std_msgs visualization_msgs tf2_ros interfaces_hot_wheels
+  rclcpp geometry_msgs ackermann_msgs nav_msgs sensor_msgs std_msgs visualization_msgs tf2_ros tf2_geometry_msgs interfaces_hot_wheels
 )
 
 # Install Cpp executables
